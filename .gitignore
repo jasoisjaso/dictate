@@ -1,0 +1,24 @@
+# venvs
+.venv-win/
+venv/
+.venv/
+
+# python
+__pycache__/
+*.pyc
+
+# build output
+build/
+dist/
+*.build/
+*.dist/
+*.onefile-build/
+packaging/Output/
+
+# models & user data (never commit)
+models/
+*.onnx.cache
+
+# editor / OS cruft
+.DS_Store
+Thumbs.db

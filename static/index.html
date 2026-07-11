@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transcribe</title>
+<style>
+  :root {
+    --bg: #101214; --panel: #191c1f; --panel2: #1f2327; --line: #2a2f34;
+    --text: #e8eaec; --dim: #9aa3ab; --accent: #4da3ff; --ok: #46c07a;
+    --err: #e46a6a; --warn: #d8a23c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 24px 20px 60px; }
+  header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 20px; }
+  header h1 { font-size: 22px; margin: 0; letter-spacing: .3px; }
+  #sysinfo { color: var(--dim); font-size: 13px; }
+  #sysinfo b { color: var(--text); font-weight: 600; }
+
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
+  }
+  .controls label { color: var(--dim); font-size: 13px; }
+  select, button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 12px; font: inherit; font-size: 14px;
+  }
+  select:focus, button:focus { outline: 1px solid var(--accent); }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #08111c; font-weight: 600; }
+  button.danger-live { background: var(--err); border-color: var(--err); color: #fff; }
+  .chk { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 14px; }
+
+  #drop {
+    border: 2px dashed var(--line); border-radius: 12px; background: var(--panel);
+    padding: 38px 20px; text-align: center; color: var(--dim); cursor: pointer;
+    transition: border-color .15s, background .15s; margin-bottom: 22px;
+  }
+  #drop.over { border-color: var(--accent); background: #16202b; color: var(--text); }
+  #drop .big { font-size: 17px; color: var(--text); margin-bottom: 4px; }
+  #rec-hint { font-size: 13px; margin-top: 10px; }
+
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--dim); margin: 26px 0 10px; }
+  .job {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; margin-bottom: 8px; cursor: pointer;
+  }
+  .job:hover { border-color: #3a4249; }
+  .job.sel { border-color: var(--accent); }
+  .job .row1 { display: flex; gap: 10px; align-items: center; }
+  .job .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .job .meta { color: var(--dim); font-size: 12.5px; margin-top: 3px; }
+  .badge { font-size: 12px; padding: 2px 9px; border-radius: 20px; border: 1px solid var(--line); color: var(--dim); flex-shrink: 0; }
+  .badge.done { color: var(--ok); border-color: var(--ok); }
+  .badge.error { color: var(--err); border-color: var(--err); }
+  .badge.processing { color: var(--warn); border-color: var(--warn); }
+  .bar { height: 4px; background: var(--panel2); border-radius: 2px; margin-top: 9px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width .4s; }
+  .del { color: var(--dim); background: none; border: none; font-size: 16px; padding: 2px 6px; }
+  .del:hover { color: var(--err); border: none; }
+
+  #result {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-top: 14px; display: none;
+  }
+  #result .tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
+  #transcript {
+    white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 14px; max-height: 55vh; overflow: auto; font-size: 14.5px;
+  }
+  .ts { color: var(--accent); font-size: 12.5px; font-variant-numeric: tabular-nums; margin-right: 8px; }
+  .seg { margin-bottom: 6px; }
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    padding: 9px 18px; border-radius: 8px; opacity: 0; transition: opacity .25s; pointer-events: none;
+  }
+  #toast.show { opacity: 1; }
+  .empty { color: var(--dim); font-size: 14px; padding: 8px 2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Transcribe</h1>
+    <span id="sysinfo">connecting…</span>
+  </header>
+
+  <div class="controls">
+    <label>Model</label>
+    <select id="model"></select>
+    <label>Language</label>
+    <select id="language">
+      <option value="">Auto-detect</option>
+      <option value="en">English</option>
+      <option value="bs">Bosnian</option>
+      <option value="hr">Croatian</option>
+      <option value="sr">Serbian</option>
+      <option value="de">German</option>
+      <option value="es">Spanish</option>
+      <option value="fr">French</option>
+      <option value="it">Italian</option>
+      <option value="pt">Portuguese</option>
+      <option value="ru">Russian</option>
+      <option value="zh">Chinese</option>
+      <option value="ja">Japanese</option>
+      <option value="ko">Korean</option>
+      <option value="hi">Hindi</option>
+      <option value="ar">Arabic</option>
+      <option value="tr">Turkish</option>
+      <option value="vi">Vietnamese</option>
+    </select>
+    <span class="chk"><input type="checkbox" id="translate"><label for="translate">Translate to English</label></span>
+    <button id="recbtn" class="primary">Record mic</button>
+  </div>
+
+  <div id="drop">
+    <div class="big">Drop audio or video here</div>
+    <div>or click to choose files — mp3, wav, m4a, mp4, mkv, anything ffmpeg reads</div>
+    <div id="rec-hint"></div>
+    <input type="file" id="file" multiple hidden
+      accept="audio/*,video/*,.mp3,.wav,.m4a,.ogg,.opus,.flac,.mp4,.mkv,.mov,.webm,.avi,.aac,.wma,.3gp">
+  </div>
+
+  <h2>Jobs</h2>
+  <div id="jobs"><div class="empty">Nothing yet. Drop a file above.</div></div>
+
+  <div id="result">
+    <div class="tools">
+      <span class="chk"><input type="checkbox" id="showts" checked><label for="showts">Timestamps</label></span>
+      <button id="copybtn">Copy text</button>
+      <button data-fmt="txt">TXT</button>
+      <button data-fmt="srt">SRT</button>
+      <button data-fmt="vtt">VTT</button>
+      <button data-fmt="json">JSON</button>
+    </div>
+    <div id="transcript"></div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let selected = null, currentJob = null, recorder = null, recChunks = [];
+
+function toast(msg) {
+  $('toast').textContent = msg;
+  $('toast').classList.add('show');
+  setTimeout(() => $('toast').classList.remove('show'), 2200);
+}
+function fmtDur(s) {
+  if (s == null) return '';
+  s = Math.round(s);
+  const m = Math.floor(s / 60), sec = s % 60;
+  return m ? `${m}m ${sec}s` : `${sec}s`;
+}
+function fmtSize(b) {
+  return b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' KB';
+}
+function fmtTs(t) {
+  const m = Math.floor(t / 60), s = Math.floor(t % 60);
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+async function loadStatus() {
+  try {
+    const s = await (await fetch('/api/status')).json();
+    const sel = $('model');
+    if (!sel.options.length) {
+      for (const [id, label] of Object.entries(s.models)) {
+        const o = document.createElement('option');
+        o.value = id; o.textContent = label;
+        if (id === s.default_model) o.selected = true;
+        sel.appendChild(o);
+      }
+    }
+    $('sysinfo').innerHTML = s.loaded_model
+      ? `model <b>${s.loaded_model}</b> on <b>${s.device}</b>`
+      : 'model loads on first job';
+  } catch { $('sysinfo').textContent = 'server unreachable'; }
+}
+
+async function upload(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('model', $('model').value);
+  fd.append('language', $('language').value);
+  fd.append('task', $('translate').checked ? 'translate' : 'transcribe');
+  const r = await fetch('/api/transcribe', { method: 'POST', body: fd });
+  if (!r.ok) { toast('Upload failed: ' + (await r.text()).slice(0, 120)); return; }
+  const { id } = await r.json();
+  selected = id;
+  toast('Queued ' + file.name);
+  refresh();
+}
+
+function jobCard(j) {
+  const div = document.createElement('div');
+  div.className = 'job' + (j.id === selected ? ' sel' : '');
+  const lang = j.detected_language ? ` · ${j.detected_language}` : '';
+  const dur = j.duration ? ` · ${fmtDur(j.duration)} audio` : '';
+  const took = j.elapsed ? ` · done in ${fmtDur(j.elapsed)}` : '';
+  const dev = j.device ? ` · ${j.device}` : '';
+  div.innerHTML = `
+    <div class="row1">
+      <span class="name">${j.filename}</span>
+      <span class="badge ${j.status}">${j.status}${j.status==='processing' ? ' ' + (j.progress||0) + '%' : ''}</span>
+      <button class="del" title="Delete">&times;</button>
+    </div>
+    <div class="meta">${fmtSize(j.size)} · ${j.model}${dev}${lang}${dur}${took}${j.error ? ' · ' + j.error : ''}</div>
+    ${j.status==='processing' || j.status==='queued' ? `<div class="bar"><i style="width:${j.progress||0}%"></i></div>` : ''}`;
+  div.onclick = () => { selected = j.id; showResult(j.id); renderJobs(lastJobs); };
+  div.querySelector('.del').onclick = async e => {
+    e.stopPropagation();
+    await fetch('/api/jobs/' + j.id, { method: 'DELETE' });
+    if (selected === j.id) { selected = null; $('result').style.display = 'none'; }
+    refresh();
+  };
+  return div;
+}
+
+let lastJobs = [];
+function renderJobs(list) {
+  lastJobs = list;
+  const box = $('jobs');
+  box.innerHTML = '';
+  if (!list.length) { box.innerHTML = '<div class="empty">Nothing yet. Drop a file above.</div>'; return; }
+  list.forEach(j => box.appendChild(jobCard(j)));
+}
+
+async function refresh() {
+  const list = await (await fetch('/api/jobs')).json();
+  renderJobs(list);
+  const sel = list.find(j => j.id === selected);
+  if (sel && sel.status === 'done' && (!currentJob || currentJob.id !== sel.id || currentJob.status !== 'done')) {
+    showResult(sel.id);
+  }
+}
+
+async function showResult(id) {
+  const j = await (await fetch('/api/jobs/' + id)).json();
+  currentJob = j;
+  if (j.status !== 'done') { $('result').style.display = 'none'; return; }
+  $('result').style.display = 'block';
+  renderTranscript();
+}
+
+function renderTranscript() {
+  if (!currentJob || !currentJob.segments) return;
+  const box = $('transcript');
+  box.innerHTML = '';
+  if ($('showts').checked) {
+    currentJob.segments.forEach(s => {
+      const d = document.createElement('div');
+      d.className = 'seg';
+      d.innerHTML = `<span class="ts">${fmtTs(s.start)}</span>`;
+      d.appendChild(document.createTextNode(s.text));
+      box.appendChild(d);
+    });
+  } else {
+    box.textContent = currentJob.text;
+  }
+}
+
+$('showts').onchange = renderTranscript;
+$('copybtn').onclick = async () => {
+  if (!currentJob) return;
+  await navigator.clipboard.writeText(currentJob.text);
+  toast('Copied to clipboard');
+};
+document.querySelectorAll('[data-fmt]').forEach(b => {
+  b.onclick = () => {
+    if (!currentJob) return;
+    location.href = `/api/jobs/${currentJob.id}/download?fmt=${b.dataset.fmt}`;
+  };
+});
+
+const drop = $('drop');
+drop.onclick = () => $('file').click();
+$('file').onchange = e => { [...e.target.files].forEach(upload); e.target.value = ''; };
+['dragover', 'dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => [...e.dataTransfer.files].forEach(upload));
+
+$('recbtn').onclick = async () => {
+  if (recorder && recorder.state === 'recording') {
+    recorder.stop();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+    recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    recChunks = [];
+    recorder.ondataavailable = e => e.data.size && recChunks.push(e.data);
+    recorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      const type = recorder.mimeType || 'audio/webm';
+      const ext = type.includes('mp4') ? 'mp4' : type.includes('ogg') ? 'ogg' : 'webm';
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+      upload(new File([new Blob(recChunks, { type })], `recording-${stamp}.${ext}`, { type }));
+      $('recbtn').textContent = 'Record mic';
+      $('recbtn').classList.remove('danger-live');
+      $('rec-hint').textContent = '';
+    };
+    recorder.start();
+    $('recbtn').textContent = 'Stop & transcribe';
+    $('recbtn').classList.add('danger-live');
+    $('rec-hint').textContent = 'Recording… click "Stop & transcribe" when done.';
+  } catch (err) {
+    toast('Mic unavailable: ' + err.message);
+  }
+};
+
+loadStatus();
+refresh();
+setInterval(refresh, 1500);
+setInterval(loadStatus, 10000);
+</script>
+</body>
+</html>

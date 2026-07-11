@@ -1,0 +1,28 @@
+# Dictate settings. Edit and restart the app to apply.
+
+[whisper]
+model_size = "large-v3-turbo"   # or: large-v3, distil-large-v3, medium, small
+device = "cuda"                  # falls back to cpu automatically if unavailable
+compute_type = "float16"         # cpu fallback uses int8 regardless
+language = "en"                  # "" = auto-detect
+beam_size = 5
+initial_prompt = ""
+
+[vad]
+enabled = true
+onset_threshold = 0.50
+offset_threshold = 0.35
+silence_timeout = 2.0            # seconds of silence before auto-stop; 0 = off
+
+[hotkeys]
+# mode = "push_to_talk"  -> hold a key, speak, release (like Wispr Flow)
+# mode = "toggle"        -> tap a key to start, auto-stops on silence (hands-free)
+mode = "push_to_talk"
+push_to_talk_key = "ctrl_r"      # hold to talk. Right Ctrl avoids terminal/PowerShell/WSL clashes.
+                                 # other good picks: "alt_r", "pause", "menu", "scroll_lock", "f9"
+toggle_key = "f9"                # used only when mode = "toggle"
+abort_key = "esc"                # cancel while recording (ignored otherwise)
+
+[post_processing]
+casing = "sentence"              # sentence | upper | lower | none
+strip_trailing_period_short = true
