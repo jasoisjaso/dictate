@@ -34,12 +34,32 @@ class WhisperTranscriber:
 
     def __init__(self, cfg: dict):
         w = cfg.get("whisper", {})
-        self.model_size = w.get("model_size", "large-v3-turbo")
-        self.device = w.get("device", "cuda")
-        self.compute_type = w.get("compute_type", "float16")
-        self.language = w.get("language", "en") or None
+        want_size = w.get("model_size", "auto")
+        want_dev = w.get("device", "auto")
+        want_ct = w.get("compute_type", "auto")
+        if "auto" in (want_size, want_dev, want_ct):
+            import device as _device
+            tier = _device.detect()
+            self.model_size = tier.model_size if want_size == "auto" else want_size
+            self.device = tier.device if want_dev == "auto" else want_dev
+            self.compute_type = tier.compute_type if want_ct == "auto" else want_ct
+        else:
+            self.model_size, self.device, self.compute_type = want_size, want_dev, want_ct
+        lang = w.get("language", "en")
+        self.language = None if lang in ("", "auto") else lang
         self.beam_size = int(w.get("beam_size", 5))
         self.initial_prompt = w.get("initial_prompt", "") or None
+        cl = cfg.get("cleanup", {})
+        self.remove_fillers = bool(cl.get("remove_fillers", True))
+        self.ollama_polish = bool(cl.get("ollama_polish", False))
+        self.ollama_model = cl.get("ollama_model", "hermes4")
+        self.ollama_endpoint = cl.get("ollama_endpoint", "http://127.0.0.1:11434")
+        self.dictionary = {str(k): str(v)
+                           for k, v in cfg.get("dictionary", {}).items()}
+        # spelling boost: nudge Whisper toward the user's proper nouns
+        if self.dictionary and not self.initial_prompt:
+            self.initial_prompt = ("Terms: "
+                                   + ", ".join(self.dictionary.values()) + ".")
         self.vad_enabled = bool(cfg.get("vad", {}).get("enabled", True))
         self.vad_onset = float(cfg.get("vad", {}).get("onset_threshold", 0.5))
         pp = cfg.get("post_processing", {})
@@ -56,15 +76,19 @@ class WhisperTranscriber:
             if self._model is not None:
                 return
             from faster_whisper import WhisperModel
+            import paths as _paths
+            kw = dict(download_root=_paths.models_dir())
             try:
                 self._model = WhisperModel(
-                    self.model_size, device=self.device, compute_type=self.compute_type)
+                    self.model_size, device=self.device,
+                    compute_type=self.compute_type, **kw)
                 self.active_device = self.device
             except Exception as ex:
-                log.warning("device %r failed (%s); falling back to CPU int8",
-                            self.device, ex)
+                log.warning("device %r/%s failed (%s); falling back to CPU int8",
+                            self.device, self.compute_type, ex)
+                self.device, self.compute_type = "cpu", "int8"
                 self._model = WhisperModel(
-                    self.model_size, device="cpu", compute_type="int8")
+                    self.model_size, device="cpu", compute_type="int8", **kw)
                 self.active_device = "cpu"
             log.info("model %s loaded on %s", self.model_size, self.active_device)
 
@@ -111,6 +135,12 @@ class WhisperTranscriber:
                 rf"[\s,.]*\b{re.escape(phrase)}\b[.,]?",
                 repl.replace("\\", "\\\\"),
                 text, flags=re.IGNORECASE)
+        import cleanup as _cleanup
+        text = _cleanup.clean(text, remove_fillers=self.remove_fillers,
+                              dictionary=self.dictionary)
+        if self.ollama_polish:
+            text = _cleanup.ollama_polish(
+                text, self.ollama_model, self.ollama_endpoint)
         text = self._fix_spacing(text)
         text = self._apply_casing(text)
         words = re.findall(r"[\w']+", text)
