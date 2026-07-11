@@ -13,15 +13,27 @@ SAMPLE_RATE = 16000
 BLOCK_SIZE = 512  # 32 ms at 16 kHz
 
 
+def list_input_devices() -> list[tuple[int, str]]:
+    """(index, name) for input-capable devices; [] if enumeration fails."""
+    try:
+        return [(i, d["name"]) for i, d in enumerate(sd.query_devices())
+                if d.get("max_input_channels", 0) > 0]
+    except Exception as ex:
+        log.warning("device enumeration failed: %s", ex)
+        return []
+
+
 class AudioRecorder:
     """Non-blocking mic capture. Callback thread appends raw float32 blocks to
     a lock-guarded list; the GUI/worker threads read via stop_recording() or
     peek_tail(). If the input device vanishes (USB headset unplugged), the
     stream is rebuilt automatically on the next start."""
 
-    def __init__(self, samplerate: int = SAMPLE_RATE, blocksize: int = BLOCK_SIZE):
+    def __init__(self, samplerate: int = SAMPLE_RATE, blocksize: int = BLOCK_SIZE,
+                 input_device: int | None = None):
         self.samplerate = samplerate
         self.blocksize = blocksize
+        self.input_device = input_device
         self._chunks: list[np.ndarray] = []
         self._lock = threading.Lock()
         self._active = False
@@ -36,6 +48,17 @@ class AudioRecorder:
         with self._lock:
             n = sum(len(c) for c in self._chunks)
         return n / self.samplerate
+
+    def set_input_device(self, index: int | None):
+        """Switch microphone; takes effect on the next recording start."""
+        self.input_device = index
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
 
     def _callback(self, indata, frames, time_info, status):
         if status:
@@ -62,6 +85,7 @@ class AudioRecorder:
                     dtype="float32",
                     blocksize=self.blocksize,
                     callback=self._callback,
+                    device=self.input_device,
                 )
                 self._stream.start()
                 log.info("input stream started (device=%s)", sd.default.device)

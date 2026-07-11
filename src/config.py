@@ -6,7 +6,10 @@ import os
 import sys
 import tomllib
 
-import paths
+try:
+    from . import paths
+except ImportError:
+    import paths
 
 
 def _default_toml_path() -> str:

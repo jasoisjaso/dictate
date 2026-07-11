@@ -103,13 +103,14 @@ class DictationTrayApp(QObject):
     _sig_error = Signal(str)
     _sig_autostop = Signal()
 
-    def __init__(self, cfg: dict, app: QApplication):
+    def __init__(self, cfg: dict, app: QApplication, first_run: bool = False):
         super().__init__()
         self.cfg = cfg
         self.app = app
         self.state = LOADING
         self.engine = WhisperTranscriber(cfg)
-        self.recorder = AudioRecorder()
+        self.recorder = AudioRecorder(
+            input_device=cfg.get("audio", {}).get("input_device"))
         self.overlay = WaveformOverlay()
         self.overlay.set_level_source(self.recorder.current_level)
         self.last_injected_len = 0
@@ -140,6 +141,9 @@ class DictationTrayApp(QObject):
 
         self._start_hotkeys()
         threading.Thread(target=self._preload_model, daemon=True).start()
+        if first_run:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(800, lambda: self._open_settings(first_run=True))
 
     # ---- setup ----------------------------------------------------------
 
@@ -157,11 +161,54 @@ class DictationTrayApp(QObject):
         self.act_hint.setEnabled(False)
         menu.addAction(self.act_hint)
         menu.addSeparator()
+        act_settings = QAction("Settings…")
+        act_settings.triggered.connect(self._open_settings)
+        menu.addAction(act_settings)
+        menu.addSeparator()
         act_quit = QAction("Quit")
         act_quit.triggered.connect(self._quit)
         menu.addAction(act_quit)
         self.tray.setContextMenu(menu)
         self._menu = menu
+        self._act_settings = act_settings
+
+    def _open_settings(self, first_run: bool = False):
+        from .settings_gui import SettingsDialog
+        dlg = SettingsDialog(self.cfg, first_run=first_run)
+        dlg.saved.connect(self._apply_settings)
+        dlg.exec()
+
+    def _apply_settings(self, overlay: dict):
+        """Hot-apply everything that doesn't need a model reload."""
+        try:
+            from . import config as _config_mod
+        except ImportError:
+            import config as _config_mod
+        self.cfg = _config_mod.load()
+        hk = self.cfg.get("hotkeys", {})
+        self.mode = hk.get("mode", "push_to_talk").strip().lower()
+        self.ptt_name = hk.get("push_to_talk_key", "ctrl_r")
+        self.toggle_name = hk.get("toggle_key", "f9")
+        self.abort_name = hk.get("abort_key", "esc")
+        try:
+            self._listener.stop()
+        except Exception:
+            pass
+        self._start_hotkeys()
+        self.recorder.set_input_device(
+            self.cfg.get("audio", {}).get("input_device"))
+        cl = self.cfg.get("cleanup", {})
+        self.engine.remove_fillers = bool(cl.get("remove_fillers", True))
+        self.engine.dictionary = {str(k): str(v) for k, v in
+                                  self.cfg.get("dictionary", {}).items()}
+        lang = self.cfg.get("whisper", {}).get("language", "en")
+        self.engine.language = None if lang in ("", "auto") else lang
+        self._set_state(self.state)
+        want_model = self.cfg.get("whisper", {}).get("model_size", "auto")
+        if want_model not in ("auto", self.engine.model_size):
+            self.tray.showMessage(
+                "Dictate", "Model change takes effect after you restart Dictate.",
+                QSystemTrayIcon.Information, 5000)
 
     def _start_hotkeys(self):
         from pynput import keyboard

@@ -13,27 +13,17 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _setup_logging():
-    log_dir = Path(os.environ.get("LOCALAPPDATA", ROOT)) / "TranscribeDictate"
-    log_dir.mkdir(parents=True, exist_ok=True)
+    from . import paths
+    log_file = paths.log_path()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         handlers=[
-            logging.FileHandler(log_dir / "dictate.log", encoding="utf-8"),
+            logging.FileHandler(log_file, encoding="utf-8"),
             logging.StreamHandler(),
         ],
     )
-    return log_dir / "dictate.log"
-
-
-def _load_config() -> dict:
-    cfg_path = ROOT / "config" / "settings.toml"
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # Python 3.10
-        import tomli as tomllib
-    with cfg_path.open("rb") as f:
-        return tomllib.load(f)
+    return log_file
 
 
 def main():
@@ -45,7 +35,9 @@ def main():
     from .win32_input import configure_cuda_dll_search_paths
     configure_cuda_dll_search_paths()
 
-    cfg = _load_config()
+    from . import config as config_mod, paths
+    cfg = config_mod.load()
+    first_run = not os.path.exists(paths.config_path())
 
     from PySide6.QtCore import QLockFile
     from PySide6.QtWidgets import QApplication, QSystemTrayIcon
@@ -65,7 +57,7 @@ def main():
         sys.exit(1)
 
     from .ui import DictationTrayApp
-    tray_app = DictationTrayApp(cfg, app)  # noqa: F841  (owns the tray icon)
+    tray_app = DictationTrayApp(cfg, app, first_run=first_run)  # noqa: F841
     sys.exit(app.exec())
 
 

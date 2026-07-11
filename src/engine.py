@@ -38,7 +38,10 @@ class WhisperTranscriber:
         want_dev = w.get("device", "auto")
         want_ct = w.get("compute_type", "auto")
         if "auto" in (want_size, want_dev, want_ct):
-            import device as _device
+            try:
+                from . import device as _device
+            except ImportError:
+                import device as _device
             tier = _device.detect()
             self.model_size = tier.model_size if want_size == "auto" else want_size
             self.device = tier.device if want_dev == "auto" else want_dev
@@ -76,7 +79,10 @@ class WhisperTranscriber:
             if self._model is not None:
                 return
             from faster_whisper import WhisperModel
-            import paths as _paths
+            try:
+                from . import paths as _paths
+            except ImportError:
+                import paths as _paths
             kw = dict(download_root=_paths.models_dir())
             try:
                 self._model = WhisperModel(
@@ -135,7 +141,10 @@ class WhisperTranscriber:
                 rf"[\s,.]*\b{re.escape(phrase)}\b[.,]?",
                 repl.replace("\\", "\\\\"),
                 text, flags=re.IGNORECASE)
-        import cleanup as _cleanup
+        try:
+            from . import cleanup as _cleanup
+        except ImportError:
+            import cleanup as _cleanup
         text = _cleanup.clean(text, remove_fillers=self.remove_fillers,
                               dictionary=self.dictionary)
         if self.ollama_polish:
