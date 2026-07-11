@@ -102,6 +102,9 @@ class DictationTrayApp(QObject):
     _sig_result = Signal(str)
     _sig_error = Signal(str)
     _sig_autostop = Signal()
+    _sig_dl_start = Signal(str)
+    _sig_dl_progress = Signal(int)
+    _sig_dl_done = Signal()
 
     def __init__(self, cfg: dict, app: QApplication, first_run: bool = False):
         super().__init__()
@@ -138,6 +141,10 @@ class DictationTrayApp(QObject):
         self._sig_result.connect(self._on_result)
         self._sig_error.connect(self._on_error)
         self._sig_autostop.connect(self._stop_and_transcribe)
+        self._sig_dl_start.connect(self._on_dl_start)
+        self._sig_dl_progress.connect(self._on_dl_progress)
+        self._sig_dl_done.connect(self._on_dl_done)
+        self._dl_dialog = None
 
         self._start_hotkeys()
         threading.Thread(target=self._preload_model, daemon=True).start()
@@ -262,11 +269,52 @@ class DictationTrayApp(QObject):
 
     def _preload_model(self):
         try:
+            try:
+                from . import first_run, paths
+            except ImportError:
+                import first_run
+                import paths
+            if not first_run.model_is_cached(self.engine.model_size,
+                                             paths.models_dir()):
+                self._sig_dl_start.emit(self.engine.model_size)
+                try:
+                    first_run.download_with_progress(
+                        self.engine.model_size, paths.models_dir(),
+                        self._sig_dl_progress.emit)
+                finally:
+                    self._sig_dl_done.emit()
             self.engine.load()
             self._sig_model_ready.emit(self.engine.active_device or "?")
         except Exception as ex:
             log.exception("model preload failed")
             self._sig_error.emit(f"Model failed to load: {ex}")
+
+    # ---- first-run download dialog (GUI thread) ---------------------------
+
+    def _on_dl_start(self, model_size: str):
+        from PySide6.QtWidgets import QProgressDialog
+        from .first_run import APPROX_SIZE
+        size_hint = APPROX_SIZE.get(model_size, "")
+        label = (f"Downloading the speech model ({model_size}"
+                 + (f", about {size_hint}" if size_hint else "")
+                 + ").\nThis happens once — after this Dictate works offline.")
+        dlg = QProgressDialog(label, None, 0, 100)
+        dlg.setWindowTitle("Dictate — first-time setup")
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(False)
+        dlg.setValue(0)
+        dlg.show()
+        self._dl_dialog = dlg
+
+    def _on_dl_progress(self, pct: int):
+        if self._dl_dialog is not None:
+            self._dl_dialog.setValue(pct)
+
+    def _on_dl_done(self):
+        if self._dl_dialog is not None:
+            self._dl_dialog.close()
+            self._dl_dialog = None
 
     # ---- state (GUI thread) ---------------------------------------------
 

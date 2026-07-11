@@ -22,7 +22,10 @@ _POLISH_PROMPT = (
 
 def strip_fillers(text: str) -> str:
     out = _FILLER_RE.sub(" ", text)
-    return re.sub(r"\s{2,}", " ", out).strip()
+    # collapse runs of spaces/tabs ONLY — newlines from spoken "new line"
+    # commands must survive this pass
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    return re.sub(r" *\n *", "\n", out).strip()
 
 
 def apply_dictionary(text: str, mapping: dict[str, str]) -> str:

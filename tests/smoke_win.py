@@ -1,13 +1,14 @@
 """Headless smoke test for the Windows dictation stack.
 Run from repo root:  .venv-win\\Scripts\\python tests\\smoke_win.py path\\to\\jfk.wav
 
-Covers: DLL registration, CUDA engine load, real transcription, the
-punctuation lexicon, and SendInput struct layout — everything except
-actually injecting keystrokes into the desktop.
+Covers: DLL registration, hardware tiering, layered config, cleanup pipeline,
+CUDA engine load, real transcription, punctuation lexicon, and SendInput
+struct layout — everything except actually injecting keystrokes.
 """
 
 import ctypes
 import sys
+import time
 import wave
 from pathlib import Path
 
@@ -32,13 +33,27 @@ if win32_input.IS_WINDOWS:
 else:
     print("[2] skipped (not Windows)")
 
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
-cfg = tomllib.load((ROOT / "config" / "settings.toml").open("rb"))
-print(f"[3] config OK: model={cfg['whisper']['model_size']} "
-      f"hotkey={cfg['hotkeys']['trigger_key']}")
+from src import config as config_mod  # noqa: E402
+
+cfg = config_mod.load()
+hk = cfg["hotkeys"]
+print(f"[3] layered config OK: model={cfg['whisper']['model_size']} "
+      f"mode={hk['mode']} ptt={hk['push_to_talk_key']}")
+
+from src import device  # noqa: E402
+
+tier = device.detect()
+assert tier.device in ("cuda", "cpu")
+assert tier.model_size in ("tiny", "base", "small", "medium",
+                           "large-v3", "large-v3-turbo", "distil-large-v3")
+print(f"[4] hardware tier OK: {tier.as_dict()}")
+
+from src import cleanup  # noqa: E402
+
+assert cleanup.strip_fillers("um hello uh there") == "hello there"
+assert cleanup.apply_dictionary("i love woolies",
+                                {"woolies": "Woolworths"}) == "i love Woolworths"
+print("[5] cleanup OK (fillers + dictionary)")
 
 from src.engine import WhisperTranscriber  # noqa: E402
 
@@ -49,11 +64,12 @@ cases = [
      "Hello world. This is a test, right?"),
     ("first line new line second line", "First line\nSecond line"),
     ("okay period", "Okay"),
+    ("um so I think we ship it period", "So I think we ship it."),
 ]
 for raw, want in cases:
     got = eng.post_process(raw)
     assert got == want, f"post_process({raw!r}) = {got!r}, wanted {want!r}"
-print(f"[4] punctuation lexicon OK ({len(cases)} cases)")
+print(f"[6] punctuation + cleanup pipeline OK ({len(cases)} cases)")
 
 wav_path = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "tests" / "jfk.wav")
 with wave.open(wav_path, "rb") as w:
@@ -61,18 +77,17 @@ with wave.open(wav_path, "rb") as w:
     audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
     audio = audio.astype(np.float32) / 32768.0
 
-print("[5] loading model (first run downloads ~1.6 GB)…")
+print("[7] loading model (first run downloads it once)…")
 eng.load()
 print(f"    loaded on: {eng.active_device}")
 
 assert eng.has_speech(audio), "VAD says the JFK clip has no speech"
-print("[6] VAD speech detection OK")
+print("[8] VAD speech detection OK")
 
-import time  # noqa: E402
 t0 = time.time()
 text = eng.transcribe_audio_buffer(audio)
 dt = time.time() - t0
-print(f"[7] transcribed {len(audio)/16000:.1f}s in {dt:.1f}s: {text!r}")
+print(f"[9] transcribed {len(audio)/16000:.1f}s in {dt:.1f}s: {text!r}")
 assert "ask not what your country can do for you" in text.lower()
 
 print("\nALL CHECKS PASSED on device:", eng.active_device)

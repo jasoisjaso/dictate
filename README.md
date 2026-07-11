@@ -1,89 +1,97 @@
-# Transcribe
+# Dictate
 
-Two fully local Whisper tools in this folder. No cloud, no API keys, nothing
-leaves the PC. Both use faster-whisper (CTranslate2) with large-v3-turbo on
-the RTX 4060 Ti.
+Talk instead of type — in any Windows app. Hold a key, say what you want,
+let go, and the words appear where your cursor is. Everything runs on your
+own PC: no cloud, no account, no subscription, and your voice never leaves
+your machine.
 
-## 1. Dictate — speak into any Windows app (the "google research.md" build)
+Built on OpenAI's Whisper (via [faster-whisper](https://github.com/SYSTRAN/faster-whisper)),
+with the polish the free tools usually skip: filler-word cleanup, a personal
+dictionary, automatic hardware tuning, and a settings window a non-technical
+person can actually use.
 
-Push-to-talk, like Wispr Flow: **hold Right Ctrl, talk, let go** — your words
-get typed straight into whatever window has focus. No clipboard involved, so
-whatever you had copied stays copied. While you talk, a small dark pill sits
-at the bottom-centre of the screen showing a live waveform of your voice; it
-turns into a blue shimmer while it transcribes, then vanishes.
+## Install (no admin rights needed)
 
-Right Ctrl was chosen because, unlike the old Ctrl+Alt+D, it does nothing on
-its own in a terminal / PowerShell / WSL, so it never collides with anything.
+1. Download `Dictate-Setup-cpu.exe` (works on every PC) or
+   `Dictate-Setup-gpu.exe` (NVIDIA graphics card — faster and more accurate)
+   from the releases page.
+2. Run it. **Windows will show a blue "Windows protected your PC" warning**
+   because this installer isn't code-signed (certificates cost hundreds of
+   dollars a year; this project is free). Click **More info → Run anyway**.
+   That is the only scary-looking step, and it installs entirely into your
+   own user folder — no administrator password, no UAC prompt, nothing
+   system-wide is touched.
+3. First launch downloads the speech model once (progress bar shows how
+   long). After that it works fully offline.
 
-- Setup (already done on this PC): `setup-windows.bat`
-- Start: `dictate.bat`  (tray icon appears; green = ready)
-- Tray colours: grey loading, green ready, red recording, blue transcribing
-- Esc cancels a recording. Esc does nothing when not recording.
+## Use it
 
-### Trigger options (config `[hotkeys]`)
+- **Hold Right Ctrl and talk. Let go when you're done.** Your words get
+  typed into whatever app you're in — email, Word, chat, browser, anything.
+- While you talk, a small pill at the bottom of the screen shows a live
+  waveform so you know it's hearing you. Blue shimmer = it's thinking.
+- Say punctuation when you want it: "period", "comma", "question mark",
+  "new line", "new paragraph", "bullet point".
+- Said something wrong? Say **"scratch that"** — the last thing it typed
+  gets deleted.
+- Tray icon colours: green = ready, red = recording, blue = transcribing.
 
-- `mode = "push_to_talk"` (default): hold `push_to_talk_key`, speak, release.
-  Change the key to any of: `ctrl_r`, `alt_r` (Right Alt), `pause`, `menu`,
-  `scroll_lock`, `f9`, etc.
-- `mode = "toggle"` (hands-free): tap `toggle_key` once to start; it auto-stops
-  after `silence_timeout` seconds of silence (or tap again). This is the
-  "fire up and just talk" mode — set `toggle_key` to something like `f9`.
-- Spoken commands: "period", "full stop", "comma", "question mark",
-  "exclamation mark", "colon", "semicolon", "new line", "new paragraph",
-  "open/close parenthesis", "bullet point", and "scratch that" (deletes the
-  last thing it typed).
-- Settings: `config/settings.toml` (hotkey, model, language, auto-stop
-  timeout, casing). Restart the app after editing.
-- Log: `%LOCALAPPDATA%\TranscribeDictate\dictate.log`
-- Verified 2026-07-11: smoke test transcribes the JFK clip in 1.2 s on CUDA
-  (`tests\smoke_win.py` — all 7 checks pass).
+## Settings (right-click the tray icon → Settings…)
 
-To start it with Windows automatically: put a shortcut to `dictate.bat` in
-`shell:startup`.
+- **How you talk to it** — hold-a-key (default) or tap-to-start/hands-free,
+  with any key you like. Click the key button and press your choice.
+- **Microphone** — pick a specific mic or leave on system default.
+- **Model** — Auto picks the best for your hardware. Manual choices from
+  tiny (fast, rough) to large-v3 (slow, most accurate).
+- **Language** — English by default; set your language or Auto-detect.
+  Whisper speaks ~99 languages.
+- **Make me sound good** — filler-word removal ("um", "uh"), plus **My
+  words**: teach it names and jargon ("woolies" → "Woolworths") and it will
+  both spell them correctly and expand them as you speak.
+- **Start when I log in** — one checkbox, no Task Scheduler fiddling.
 
-### Where the build deviates from google research.md (on purpose)
+## Will it run on my PC?
 
-The blueprint was followed for architecture, config schema, lexicon, DLL
-registration and SendInput injection. Four things in it were wrong or
-outdated and were corrected after research:
+Auto mode measures your hardware and picks the strongest model that fits:
 
-1. `numpy==1.24.4` has no Python 3.12 wheels — the specified install fails.
-   Using numpy >=1.26 (pip resolved 2.5.1, works).
-2. `nvidia-cudnn-cu12==9.1.0.70` / `cublas==12.1.3.1` pins are stale;
-   ctranslate2 4.8.1 runs on current cu12 wheels (cuDNN 9.24 — same versions
-   already proven by the Sorted worker on this machine).
-3. `pynput==1.7.6` predates Win11 hook fixes; using 1.8.2.
-4. The Tkinter click-through overlay (ctypes WS_EX_TRANSPARENT hacks inside a
-   PySide6 app = two GUI event loops) was replaced with a native Qt overlay
-   using WindowTransparentForInput — same click-through effect, one toolkit.
-   Also the blueprint's sample hotkey value was mangled ("++d"); it is
-   `ctrl+alt+d` in settings.toml.
+| Your hardware              | What Auto picks                | Experience              |
+|----------------------------|--------------------------------|-------------------------|
+| NVIDIA GPU, 6 GB+ VRAM     | large-v3-turbo, float16        | Best. Instant + accurate|
+| NVIDIA GPU, 4.5–6 GB       | large-v3-turbo, int8           | Nearly as good          |
+| NVIDIA GPU, 3–4.5 GB       | small, int8                    | Fast, good accuracy     |
+| NVIDIA GPU, under 3 GB     | base, int8                     | Fast, decent accuracy   |
+| No NVIDIA GPU (CPU only)   | small, int8                    | A beat slower, still good|
 
-## 2. Web app — transcribe files in the browser (WSL)
+You can override any of this in Settings. If a GPU load fails for any
+reason, Dictate quietly falls back to CPU instead of crashing.
 
-Drag-and-drop transcription for recordings, videos, voice memos, with SRT/VTT
-subtitle export.
+## Privacy
 
-```bash
-bash run.sh          # then open http://localhost:8737
+Audio is processed in memory on your machine and thrown away. Nothing is
+recorded to disk, nothing is uploaded anywhere, ever. The only network
+traffic is the one-time model download from Hugging Face.
+
+## Build it yourself (developers)
+
+```
+git clone https://gitea.taild045e.ts.net/jaso/transcribe.git
+cd transcribe
+setup-windows.bat              # creates .venv-win + installs deps (~5 min)
+dictate.bat                    # run from source
+.venv-win\Scripts\python tests\smoke_win.py   # verify: ALL CHECKS PASSED
+
+packaging\build_nuitka.bat cpu # compile (or "gpu" for the CUDA build)
+ISCC packaging\installer.iss   # build the per-user installer (Inno Setup 6)
 ```
 
-- Any format ffmpeg reads (mp3, m4a, mp4, mkv, webm, …), multiple files queue
-- Mic recording in the browser, live progress bars, job history
-- Copy button + TXT / SRT / VTT / JSON downloads, timestamps toggle
-- Language auto-detect or force, translate-to-English mode
-- Model picker: turbo (default), large-v3, distil (fast English), small
-- Verified 2026-07-11: JFK clip word-perfect on CUDA, 0.8 s warm
+Pure-logic tests run anywhere: `python -m pytest tests -q --ignore=tests/smoke_win.py`.
 
-Server code: `server.py` + `static/index.html`. venv lives at
-`~/.cache/transcribe/venv` (WSL venvs must stay off /mnt/c). Job data:
-`~/.cache/transcribe/data/`.
+## Bonus: web transcriber (WSL/Linux)
 
-## Engine facts (researched July 2026)
+`run.sh` starts a drag-and-drop file transcriber at `http://localhost:8737`
+— drop any audio/video file, get TXT/SRT/VTT/JSON out. Same engine, GPU
+accelerated, handles long recordings.
 
-- faster-whisper = ~4x openai/whisper speed at identical accuracy on NVIDIA.
-- large-v3-turbo: OpenAI distilled large-v3 (decoder 32 -> 4 layers), ~1.6 GB,
-  near large-v2 accuracy at ~8x speed. No Whisper v4 exists as of June 2026.
-- Anti-hallucination: Silero VAD filter on, condition_on_previous_text off.
-- NVIDIA Parakeet v3 edges Whisper on English WER (6.34 vs 6.43) but is
-  English/EU-only and needs the NeMo stack — skipped deliberately.
+## License
+
+MIT. Whisper models are MIT (OpenAI); faster-whisper is MIT (SYSTRAN).

@@ -30,6 +30,12 @@ def configure_cuda_dll_search_paths():
         return []
 
     search_roots = []
+    # Frozen (Nuitka standalone): the nvidia/ and ctranslate2/ trees are
+    # copied next to the executable, not into a site-packages.
+    exe_dir = os.path.dirname(sys.executable)
+    search_roots.append(exe_dir)
+    if getattr(sys, "frozen", False) and sys.argv and sys.argv[0]:
+        search_roots.append(os.path.dirname(os.path.abspath(sys.argv[0])))
     try:
         search_roots.extend(site.getsitepackages())
     except AttributeError:
