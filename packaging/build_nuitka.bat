@@ -36,9 +36,7 @@ python -m nuitka ^
   --product-version=1.0.0 ^
   --include-package=faster_whisper ^
   --include-package-data=faster_whisper ^
-  --include-package=av ^
-  --include-package=ctranslate2 ^
-  --include-package=onnxruntime ^
+  --include-module=av.utils ^
   --include-package=src ^
   --include-data-dir=config=config ^
   %EXTRA% ^
