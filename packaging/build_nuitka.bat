@@ -36,14 +36,18 @@ python -m nuitka ^
   --product-version=1.0.0 ^
   --include-package=faster_whisper ^
   --include-package-data=faster_whisper ^
+  --include-package=av ^
+  --include-package=ctranslate2 ^
+  --include-package=onnxruntime ^
+  --include-package=src ^
   --include-data-dir=config=config ^
   %EXTRA% ^
   --output-dir=build ^
   --output-filename=Dictate.exe ^
-  src\main.py || goto :err
+  dictate_launcher.py || goto :err
 
 echo.
-echo Built build\main.dist\Dictate.exe (%VARIANT% variant)
+echo Built build\dictate_launcher.dist\Dictate.exe (%VARIANT% variant)
 exit /b 0
 
 :err

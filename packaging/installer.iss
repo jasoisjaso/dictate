@@ -30,7 +30,7 @@ WizardStyle=modern
 UninstallDisplayIcon={app}\{#AppExe}
 
 [Files]
-Source: "..\build\main.dist\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+Source: "..\build\dictate_launcher.dist\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
