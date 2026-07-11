@@ -47,10 +47,13 @@ def main():
     app.setApplicationName("Dictate")
 
     lock = QLockFile(str(Path(os.environ.get("TEMP", "/tmp")) / "transcribe-dictate.lock"))
-    lock.setStaleLockTime(0)
+    # 30s staleness: a killed/crashed instance must never brick the next start
+    lock.setStaleLockTime(30_000)
     if not lock.tryLock(100):
-        log.error("another instance is already running — exiting")
-        sys.exit(1)
+        lock.removeStaleLockFile()
+        if not lock.tryLock(100):
+            log.error("another instance is already running — exiting")
+            sys.exit(1)
 
     if not QSystemTrayIcon.isSystemTrayAvailable():
         log.error("no system tray available")
