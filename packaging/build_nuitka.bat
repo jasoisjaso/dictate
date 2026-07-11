@@ -18,7 +18,6 @@ if "%VARIANT%"=="" set VARIANT=gpu
 
 set EXTRA=
 if /i "%VARIANT%"=="gpu" (
-  set EXTRA=--include-data-dir=.venv-win\Lib\site-packages\nvidia=nvidia
   echo Building GPU variant [bundles cuBLAS/cuDNN, ~1.5 GB]
 ) else (
   echo Building CPU variant [no CUDA libs, much smaller]
@@ -43,6 +42,14 @@ python -m nuitka ^
   --output-dir=build ^
   --output-filename=Dictate.exe ^
   dictate_launcher.py || goto :err
+
+REM Nuitka refuses to ship DLLs via --include-data-dir, so the CUDA runtime
+REM must be copied in explicitly after the compile.
+if /i "%VARIANT%"=="gpu" (
+  echo Copying CUDA runtime DLLs into the dist...
+  robocopy .venv-win\Lib\site-packages\nvidia build\dictate_launcher.dist\nvidia /E /NFL /NDL /NJH /NJS
+  if errorlevel 8 goto :err
+)
 
 echo.
 echo Built build\dictate_launcher.dist\Dictate.exe (%VARIANT% variant)
