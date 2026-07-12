@@ -130,6 +130,24 @@ class WhisperTranscriber:
                 condition_on_previous_text=False,
             )
             text = " ".join(s.text.strip() for s in segments).strip()
+            # Safety net for real dictation that came back empty: the VAD filter
+            # can occasionally strip a whole take (quiet mic, breathy speech),
+            # which is exactly the "I spoke a paragraph and nothing appeared"
+            # failure. On a substantial take (> ~2s) with an empty result, retry
+            # once WITHOUT the VAD filter so we don't silently drop real speech.
+            if not text and self.vad_enabled and audio_data.size > 16000 * 2:
+                log.info("empty result with VAD on a %.1fs take — retrying "
+                         "without VAD filter", audio_data.size / 16000)
+                segments, _info = self._model.transcribe(
+                    audio_data,
+                    language=self.language,
+                    task="transcribe",
+                    beam_size=self.beam_size,
+                    initial_prompt=self.initial_prompt,
+                    vad_filter=False,
+                    condition_on_previous_text=False,
+                )
+                text = " ".join(s.text.strip() for s in segments).strip()
         # Guard against Whisper's classic silence hallucinations ("Thank you.",
         # "Thanks for watching!", "Please subscribe"). If the take is short and
         # the whole transcript is a single known hallucination phrase, drop it

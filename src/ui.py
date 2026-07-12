@@ -490,8 +490,27 @@ class DictationTrayApp(QObject):
         self._set_state(TRANSCRIBING)
         self.overlay.show_processing()
         self._beep(660, 70)
+        # token identifies this transcription; the watchdog uses it so a stuck
+        # long take can never permanently soft-lock the app at TRANSCRIBING
+        self._transcribe_token = getattr(self, "_transcribe_token", 0) + 1
+        token = self._transcribe_token
         threading.Thread(target=self._transcribe_worker, args=(audio,),
                          daemon=True).start()
+        # generous budget that scales with audio length (real-time factor is
+        # well under 1x even on CPU, so 8s + 1x audio is very safe)
+        budget_ms = int((8.0 + len(audio) / 16000) * 1000)
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(budget_ms, lambda: self._transcribe_watchdog(token))
+
+    def _transcribe_watchdog(self, token):
+        """If the transcription for `token` is still running past its budget,
+        something hung — recover to IDLE so the user isn't stuck with a blue
+        icon and an unresponsive hotkey."""
+        if self.state == TRANSCRIBING and getattr(self, "_transcribe_token", 0) == token:
+            log.warning("transcription watchdog fired (token=%s) — recovering", token)
+            self.overlay.hide_overlay()
+            self._set_state(IDLE)
+            self.overlay.flash_toast("that took too long — try a shorter take")
 
     # push-to-talk
     def _on_ptt_start(self):
@@ -515,6 +534,8 @@ class DictationTrayApp(QObject):
         self._monitor_stop.set()
         self._preview_stop.set()
         self._ptt_down = False
+        # invalidate any pending transcription watchdog
+        self._transcribe_token = getattr(self, "_transcribe_token", 0) + 1
         self.recorder.abort()
         self.overlay.hide_overlay()
         self._set_state(IDLE)
@@ -615,18 +636,22 @@ class DictationTrayApp(QObject):
             self._sig_error.emit(f"Transcription failed: {ex}")
 
     def _preview_worker(self):
-        """Live transcript while recording (GPU only): re-transcribe the whole
-        take roughly once a second and stream the tail into the overlay pill.
-        The engine lock serialises us against the final pass, so worst case
-        the final transcription waits ~1s for the last preview chunk."""
+        """Live transcript while recording (GPU only): re-transcribe only the
+        most recent few seconds of the take and stream that tail into the
+        overlay pill. We deliberately cap the snapshot length: re-transcribing
+        the WHOLE buffer on a long paragraph would hold the engine lock for
+        seconds and stall the real (final) transcription when the user lets go.
+        The preview is just a 'we can hear you' reassurance, so a short tail is
+        plenty."""
+        PREVIEW_TAIL_S = 8.0   # only ever re-run the last ~8s for the preview
         while not self._preview_stop.wait(1.0):
             if self.state != RECORDING or self.engine._model is None:
                 continue
             dur = self.recorder.duration
-            if dur < 0.8 or dur > 90:      # nothing to show / too long to re-run
+            if dur < 0.8:
                 continue
             try:
-                snapshot = self.recorder.peek_tail(dur)
+                snapshot = self.recorder.peek_tail(min(dur, PREVIEW_TAIL_S))
                 raw = self.engine.transcribe_audio_buffer(snapshot)
                 if raw and not self._preview_stop.is_set():
                     self.overlay.set_preview(raw)
