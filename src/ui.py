@@ -23,6 +23,7 @@ from .audio import AudioRecorder
 from .engine import WhisperTranscriber
 from .overlay import WaveformOverlay
 from . import appcontext, win32_input
+from . import voice_commands
 from .history import History
 
 log = logging.getLogger("dictate.ui")
@@ -118,6 +119,8 @@ class DictationTrayApp(QObject):
         self.overlay = WaveformOverlay()
         self.overlay.set_level_source(self.recorder.current_level)
         self.last_injected_len = 0
+        self.last_injected_text = ""
+        self._session_words = 0
         self._monitor_stop = threading.Event()
 
         vad = cfg.get("vad", {})
@@ -163,7 +166,16 @@ class DictationTrayApp(QObject):
         threading.Thread(target=self._preload_model, daemon=True).start()
         if first_run:
             from PySide6.QtCore import QTimer
-            QTimer.singleShot(800, lambda: self._open_settings(first_run=True))
+            QTimer.singleShot(800, lambda: self._first_run_flow())
+
+    def _first_run_flow(self):
+        """First launch: settings wizard, then the visual how-to guide."""
+        self._open_settings(first_run=True)
+        try:
+            from .guide import GuideDialog
+            GuideDialog(trigger_hint=self._trigger_hint()).exec()
+        except Exception:
+            log.exception("guide failed to open")
 
     # ---- setup ----------------------------------------------------------
 
@@ -180,13 +192,22 @@ class DictationTrayApp(QObject):
         self.act_hint = QAction(self._trigger_hint())
         self.act_hint.setEnabled(False)
         menu.addAction(self.act_hint)
+        self.act_stats = QAction("0 words this session")
+        self.act_stats.setEnabled(False)
+        menu.addAction(self.act_stats)
         menu.addSeparator()
+        act_copy = QAction("Copy last dictation")
+        act_copy.triggered.connect(self._copy_last)
+        menu.addAction(act_copy)
         act_settings = QAction("Settings…")
         act_settings.triggered.connect(self._open_settings)
         menu.addAction(act_settings)
         act_history = QAction("History…")
         act_history.triggered.connect(self._open_history)
         menu.addAction(act_history)
+        act_guide = QAction("How to use…")
+        act_guide.triggered.connect(self._open_guide)
+        menu.addAction(act_guide)
         menu.addSeparator()
         act_quit = QAction("Quit")
         act_quit.triggered.connect(self._quit)
@@ -194,6 +215,26 @@ class DictationTrayApp(QObject):
         self.tray.setContextMenu(menu)
         self._menu = menu
         self._act_settings = act_settings
+
+    def _update_stats_label(self):
+        if hasattr(self, "act_stats"):
+            w = self._session_words
+            self.act_stats.setText(
+                f"{w:,} word{'s' if w != 1 else ''} this session")
+
+    def _copy_last(self):
+        """Copy the most recent dictation to the clipboard — the fast rescue
+        when text landed in the wrong window."""
+        items = self.history.items()
+        if items:
+            QApplication.clipboard().setText(items[0].text)
+            self.overlay.flash_toast("copied last dictation")
+        else:
+            self.overlay.flash_toast("nothing dictated yet")
+
+    def _open_guide(self):
+        from .guide import GuideDialog
+        GuideDialog(trigger_hint=self._trigger_hint()).exec()
 
     def _open_history(self):
         """Recent dictations (session-only, never written to disk) with
@@ -258,6 +299,17 @@ class DictationTrayApp(QObject):
             self.cfg.get("audio", {}).get("input_device"))
         cl = self.cfg.get("cleanup", {})
         self.engine.remove_fillers = bool(cl.get("remove_fillers", True))
+        # rebuild the filler regex so custom filler-word edits take effect now,
+        # not only after a restart
+        try:
+            from . import cleanup as _cl_mod
+        except ImportError:
+            import cleanup as _cl_mod
+        extra = cl.get("custom_fillers", []) or []
+        if isinstance(extra, str):
+            extra = [p.strip() for p in extra.split(",")]
+        merged = list(_cl_mod.FILLERS) + [str(w) for w in extra]
+        self.engine.filler_re = _cl_mod._build_filler_re(merged)
         self.engine.dictionary = {str(k): str(v) for k, v in
                                   self.cfg.get("dictionary", {}).items()}
         lang = self.cfg.get("whisper", {}).get("language", "en")
@@ -406,6 +458,18 @@ class DictationTrayApp(QObject):
         preview_on = (self.live_preview
                       and self.engine.active_device == "cuda")
         self.overlay.show_recording(preview=preview_on)
+        # show which per-app profile is active, so the context awareness is
+        # visible rather than a silent behind-the-scenes thing
+        if self._rec_profile:
+            name = self._rec_profile.get("_profile", "")
+            bits = [name]
+            if self._rec_profile.get("verbatim"):
+                bits.append("verbatim")
+            elif self._rec_profile.get("tone"):
+                bits.append(self._rec_profile["tone"])
+            self.overlay.set_profile_tag(" · ".join(b for b in bits if b))
+        else:
+            self.overlay.set_profile_tag("")
         if preview_on:
             self._preview_stop.clear()
             threading.Thread(target=self._preview_worker, daemon=True).start()
@@ -454,12 +518,17 @@ class DictationTrayApp(QObject):
         self.overlay.hide_overlay()
         self._set_state(IDLE)
         if not text:
+            # empty transcript = we heard nothing usable; don't fail silently
+            self.overlay.flash_toast("didn't catch that")
             return
-        norm = re.sub(r"[^a-z ]", "", text.lower()).strip()
-        if norm == "scratch that":
-            win32_input.inject_backspaces(self.last_injected_len)
-            self.last_injected_len = 0
+
+        # --- voice-edit commands (operate on the last dictation) -----------
+        cmd = voice_commands.parse(text)
+        if cmd is not None:
+            self._run_voice_command(cmd)
             return
+
+        # --- normal dictation ---------------------------------------------
         self.history.add(text, app=self._rec_app)
         payload = text if text.endswith("\n") else text + " "
         how = win32_input.choose_injection(payload, mode=self.inject_mode,
@@ -469,6 +538,50 @@ class DictationTrayApp(QObject):
         else:
             win32_input.inject_text_native_unicode(payload)
         self.last_injected_len = len(payload)
+        self.last_injected_text = payload
+        n_words = len(re.findall(r"[\w']+", text))
+        self._session_words += n_words
+        self._update_stats_label()
+        self.overlay.flash_toast(
+            f"{n_words} word{'s' if n_words != 1 else ''} · Ctrl+Z to undo")
+
+    def _run_voice_command(self, cmd):
+        """Execute a parsed voice-edit command against the last injection."""
+        if cmd.kind == "scratch":
+            win32_input.inject_backspaces(self.last_injected_len)
+            self.last_injected_len = 0
+            self.last_injected_text = ""
+            self.overlay.flash_toast("scratched")
+            return
+        if cmd.kind == "delete_words":
+            back = voice_commands.tail_word_len(self.last_injected_text, cmd.n)
+            if back:
+                win32_input.inject_backspaces(back)
+                self.last_injected_text = self.last_injected_text[:-back]
+                self.last_injected_len = len(self.last_injected_text)
+            self.overlay.flash_toast(
+                f"deleted {cmd.n} word{'s' if cmd.n != 1 else ''}")
+            return
+        if cmd.kind == "recase":
+            old = self.last_injected_text
+            if not old.strip():
+                self.overlay.flash_toast("nothing to change")
+                return
+            trailing = old[len(old.rstrip()):]
+            new = voice_commands.apply_recase(old.rstrip(), cmd.mode) + trailing
+            win32_input.inject_backspaces(len(old))
+            how = win32_input.choose_injection(new, mode=self.inject_mode,
+                                               paste_threshold=self.paste_threshold)
+            if how == "paste":
+                win32_input.inject_text_via_paste(new)
+            else:
+                win32_input.inject_text_native_unicode(new)
+            self.last_injected_text = new
+            self.last_injected_len = len(new)
+            self.overlay.flash_toast({"upper": "ALL CAPS",
+                                      "lower": "lowercase",
+                                      "title": "Capitalized"}.get(cmd.mode, "done"))
+            return
 
     def _on_error(self, msg: str):
         log.error("%s", msg)

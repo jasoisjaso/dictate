@@ -46,7 +46,11 @@ class WaveformOverlay(QWidget):
         self._smoothed = 0.0
         self._preview_on = False
         self._preview_text = ""        # written from worker thread (str swap is atomic)
+        self._profile_tag = ""         # e.g. "terminal · verbatim", shown while recording
+        self._toast_text = ""          # brief confirmation ("12 words · Ctrl+Z to undo")
+        self._toast_until = 0.0        # monotonic deadline for the toast
         self._font = QFont("Segoe UI", 10)
+        self._tag_font = QFont("Segoe UI", 8)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -59,9 +63,38 @@ class WaveformOverlay(QWidget):
         """Called from the preview worker thread; repaint happens on the timer."""
         self._preview_text = text or ""
 
+    def set_profile_tag(self, tag: str):
+        """Small label shown in the recording pill, e.g. 'terminal · verbatim'.
+        Makes the per-app context awareness visible instead of invisible."""
+        self._profile_tag = tag or ""
+
+    def flash_toast(self, text: str, ms: int = 1600):
+        """Show a brief confirmation pill (word count, 'scratched', etc.) that
+        fades itself after `ms`. Safe to call when the main overlay is hidden —
+        it pops up on its own and tears down when the toast expires."""
+        import time as _t
+        self._toast_text = text or ""
+        self._toast_until = _t.monotonic() + ms / 1000.0
+        if not self.isVisible():
+            self._mode = "toast"
+            self._apply_size()
+            self._place()
+            self.show()
+            self.raise_()
+        if not self._timer.isActive():
+            self._timer.start(33)
+
     # ---- geometry ---------------------------------------------------------
 
     def _apply_size(self):
+        if self._mode == "toast":
+            from PySide6.QtGui import QFontMetrics
+            fm = QFontMetrics(self._font)
+            tw = fm.horizontalAdvance(self._toast_text or "")
+            self.W = max(140, tw + PAD_X * 2)
+            self.H = self.base_h
+            self.resize(self.W, self.H)
+            return
         self.W = PREVIEW_W if self._preview_on else self.base_w
         self.H = self.base_h + (PREVIEW_ROW_H if self._preview_on else 0)
         self.resize(self.W, self.H)
@@ -94,11 +127,21 @@ class WaveformOverlay(QWidget):
     def hide_overlay(self):
         self._timer.stop()
         self._preview_text = ""
+        self._profile_tag = ""
         self.hide()
 
     # ---- animation ------------------------------------------------------
 
     def _tick(self):
+        if self._mode == "toast":
+            import time as _t
+            if _t.monotonic() >= self._toast_until:
+                self._toast_text = ""
+                self._timer.stop()
+                self.hide()
+                return
+            self.update()
+            return
         if self._mode == "recording":
             raw = self._level_source() if self._level_source else 0.0
             norm = min(1.0, raw * LEVEL_GAIN)
@@ -123,6 +166,17 @@ class WaveformOverlay(QWidget):
         p.setBrush(QColor(255, 255, 255, 10))
         p.drawRoundedRect(QRectF(0.6, 0.6, self.W - 1.2, self.H - 1.2),
                           radius, radius)
+
+        # --- toast mode: just a centred confirmation line -------------------
+        if self._mode == "toast":
+            import time as _t
+            remaining = self._toast_until - _t.monotonic()
+            alpha = 255 if remaining > 0.35 else int(max(0, remaining / 0.35) * 255)
+            p.setFont(self._font)
+            p.setPen(QColor(226, 232, 240, alpha))
+            p.drawText(self.rect(), Qt.AlignCenter, self._toast_text)
+            p.end()
+            return
 
         cy = self.base_h / 2
         bars_w = N_BARS * BAR_W + (N_BARS - 1) * BAR_GAP
@@ -156,6 +210,22 @@ class WaveformOverlay(QWidget):
             p.drawText(
                 QRectF(PAD_X, self.base_h - 6, self.W - PAD_X * 2, PREVIEW_ROW_H),
                 Qt.AlignVCenter | Qt.AlignLeft, elided)
+
+        # per-app profile tag ("terminal · verbatim") pinned to the top-right,
+        # so the context awareness is visible while you speak
+        if self._mode == "recording" and self._profile_tag:
+            p.setFont(self._tag_font)
+            fm2 = QFontMetrics(self._tag_font)
+            tag = self._profile_tag
+            tw = fm2.horizontalAdvance(tag) + 14
+            th = fm2.height() + 4
+            tx = self.W - tw - 8
+            ty = 5
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(61, 125, 255, 60))
+            p.drawRoundedRect(QRectF(tx, ty, tw, th), th / 2, th / 2)
+            p.setPen(QColor(198, 219, 255, 240))
+            p.drawText(QRectF(tx, ty, tw, th), Qt.AlignCenter, tag)
         p.end()
 
     @staticmethod

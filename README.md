@@ -33,9 +33,17 @@ person can actually use.
   you know it heard you right before you let go. Blue shimmer = thinking.
 - Say punctuation when you want it: "period", "comma", "question mark",
   "new line", "new paragraph", "bullet point".
-- Said something wrong? Say **"scratch that"** — the last thing it typed
-  gets deleted.
+- **Fix it by voice** — no keyboard needed:
+  - **"scratch that"** — delete the whole last dictation
+  - **"delete last word"** / **"delete last three words"**
+  - **"capitalize that"** / **"all caps that"** / **"lowercase that"**
+- After each dictation a small pill briefly shows the **word count + "Ctrl+Z
+  to undo"**, so you always know it landed and can take it back.
 - Tray icon colours: green = ready, red = recording, blue = transcribing.
+- New here? Right-click the tray icon → **How to use…** for a quick visual
+  walkthrough (also shown once on first run).
+- Landed in the wrong window? Tray → **Copy last dictation**, or open
+  **History…** for the last 25.
 
 ## What makes it different
 
