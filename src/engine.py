@@ -73,10 +73,12 @@ class WhisperTranscriber:
         self.ollama_endpoint = cl.get("ollama_endpoint", "http://127.0.0.1:11434")
         self.dictionary = {str(k): str(v)
                            for k, v in cfg.get("dictionary", {}).items()}
-        # spelling boost: nudge Whisper toward the user's proper nouns
+        # spelling boost: nudge Whisper toward the user's proper nouns.
+        # Cap the term count — Whisper's prompt is limited to ~224 tokens and
+        # silently truncates, and a giant prompt hurts accuracy and speed.
         if self.dictionary and not self.initial_prompt:
-            self.initial_prompt = ("Terms: "
-                                   + ", ".join(self.dictionary.values()) + ".")
+            terms = list(dict.fromkeys(self.dictionary.values()))[:40]
+            self.initial_prompt = "Terms: " + ", ".join(terms) + "."
         self.vad_enabled = bool(cfg.get("vad", {}).get("enabled", True))
         self.vad_onset = float(cfg.get("vad", {}).get("onset_threshold", 0.5))
         pp = cfg.get("post_processing", {})
@@ -128,7 +130,20 @@ class WhisperTranscriber:
                 condition_on_previous_text=False,
             )
             text = " ".join(s.text.strip() for s in segments).strip()
-        log.info("raw transcript: %r", text)
+        # Guard against Whisper's classic silence hallucinations ("Thank you.",
+        # "Thanks for watching!", "Please subscribe"). If the take is short and
+        # the whole transcript is a single known hallucination phrase, drop it
+        # rather than typing junk into the user's document. A real short "thank
+        # you" in a longer sentence is unaffected (whole-string match only).
+        try:
+            from . import cleanup as _cleanup
+        except ImportError:
+            import cleanup as _cleanup
+        short_take = audio_data.size < 16000 * 2.2  # < ~2.2 s at 16 kHz
+        if short_take and _cleanup.is_probable_hallucination(text):
+            log.info("dropping probable silence hallucination: %r", text)
+            return ""
+        log.debug("raw transcript: %r", text)
         return text
 
     def has_speech(self, audio_data: np.ndarray) -> bool:

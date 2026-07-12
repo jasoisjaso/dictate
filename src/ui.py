@@ -292,6 +292,7 @@ class DictationTrayApp(QObject):
         self.abort_name = hk.get("abort_key", "esc")
         try:
             self._listener.stop()
+            self._listener = None
         except Exception:
             pass
         self._start_hotkeys()
@@ -455,6 +456,10 @@ class DictationTrayApp(QObject):
             self._on_error(str(ex))
             return False
         self._set_state(RECORDING)
+        # cap watchdog: auto-stop if a single take hits the max-duration cap
+        # (covers a stuck push-to-talk key or a forgotten toggle)
+        self._monitor_stop.clear()
+        threading.Thread(target=self._cap_watchdog, daemon=True).start()
         preview_on = (self.live_preview
                       and self.engine.active_device == "cuda")
         self.overlay.show_recording(preview=preview_on)
@@ -555,6 +560,9 @@ class DictationTrayApp(QObject):
             return
         if cmd.kind == "delete_words":
             back = voice_commands.tail_word_len(self.last_injected_text, cmd.n)
+            # never backspace more than we actually injected, so a stale buffer
+            # can't eat text the user typed themselves between dictations
+            back = min(back, self.last_injected_len)
             if back:
                 win32_input.inject_backspaces(back)
                 self.last_injected_text = self.last_injected_text[:-back]
@@ -596,8 +604,11 @@ class DictationTrayApp(QObject):
             t0 = time.time()
             raw = self.engine.transcribe_audio_buffer(audio)
             text = self.engine.post_process(raw, profile=self._rec_profile)
-            log.info("transcribed %.1fs audio in %.1fs: %r",
-                     len(audio) / 16000, time.time() - t0, text)
+            # timing at INFO; the transcript text only at DEBUG so nothing you
+            # dictate is written to the log file at the default level
+            log.info("transcribed %.1fs audio in %.1fs (%d chars)",
+                     len(audio) / 16000, time.time() - t0, len(text))
+            log.debug("result text: %r", text)
             self._sig_result.emit(text)
         except Exception as ex:
             log.exception("transcription failed")
@@ -632,6 +643,16 @@ class DictationTrayApp(QObject):
             except Exception:
                 pass
         threading.Thread(target=_play, daemon=True).start()
+
+    def _cap_watchdog(self):
+        """Auto-stop a take that hit the max-duration cap (stuck key etc.)."""
+        while not self._monitor_stop.wait(0.5):
+            if self.state != RECORDING:
+                return
+            if self.recorder.capped:
+                log.info("max recording length reached — auto-stop")
+                self._sig_autostop.emit()
+                return
 
     def _silence_monitor(self):
         had_speech = False

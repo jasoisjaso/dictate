@@ -37,12 +37,17 @@ def enable() -> bool:
     target, args = _launch_target()
     workdir = (os.path.dirname(target) if getattr(sys, "frozen", False)
                else os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    def _psq(s: str) -> str:
+        # escape for a PowerShell single-quoted string: ' -> ''
+        return s.replace("'", "''")
+
     ps = (
         "$ws = New-Object -ComObject WScript.Shell; "
-        f"$s = $ws.CreateShortcut('{_lnk_path()}'); "
-        f"$s.TargetPath = '{target}'; "
-        f"$s.Arguments = '{args}'; "
-        f"$s.WorkingDirectory = '{workdir}'; "
+        f"$s = $ws.CreateShortcut('{_psq(_lnk_path())}'); "
+        f"$s.TargetPath = '{_psq(target)}'; "
+        f"$s.Arguments = '{_psq(args)}'; "
+        f"$s.WorkingDirectory = '{_psq(workdir)}'; "
         "$s.Save()"
     )
     try:

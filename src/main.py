@@ -13,15 +13,21 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _setup_logging():
+    from logging.handlers import RotatingFileHandler
     from . import paths
     log_file = paths.log_path()
+    # Rotate so the log can't grow forever (1 MB x 3 backups). Transcript text
+    # is logged at DEBUG only, so at the default INFO level nothing you dictate
+    # is written to disk — keeping the "nothing leaves your machine" promise.
+    handlers = [
+        RotatingFileHandler(log_file, maxBytes=1_000_000, backupCount=3,
+                            encoding="utf-8"),
+        logging.StreamHandler(),
+    ]
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
+        handlers=handlers,
     )
     return log_file
 

@@ -11,6 +11,7 @@ log = logging.getLogger("dictate.audio")
 
 SAMPLE_RATE = 16000
 BLOCK_SIZE = 512  # 32 ms at 16 kHz
+MAX_RECORD_SECONDS = 300  # hard cap a single take at 5 min (~19 MB float32)
 
 
 def list_input_devices() -> list[tuple[int, str]]:
@@ -30,11 +31,15 @@ class AudioRecorder:
     stream is rebuilt automatically on the next start."""
 
     def __init__(self, samplerate: int = SAMPLE_RATE, blocksize: int = BLOCK_SIZE,
-                 input_device: int | None = None):
+                 input_device: int | None = None,
+                 max_seconds: float = MAX_RECORD_SECONDS):
         self.samplerate = samplerate
         self.blocksize = blocksize
         self.input_device = input_device
+        self.max_samples = int(max_seconds * samplerate)
         self._chunks: list[np.ndarray] = []
+        self._sample_count = 0
+        self._capped = False
         self._lock = threading.Lock()
         self._active = False
         self._stream = None
@@ -42,6 +47,11 @@ class AudioRecorder:
     @property
     def is_recording(self) -> bool:
         return self._active
+
+    @property
+    def capped(self) -> bool:
+        """True once a single take hit the max-duration cap (UI auto-stops)."""
+        return self._capped
 
     @property
     def duration(self) -> float:
@@ -65,7 +75,13 @@ class AudioRecorder:
             log.debug("audio status: %s", status)
         if self._active:
             with self._lock:
+                if self._sample_count >= self.max_samples:
+                    # hard cap reached: stop retaining audio, flag for auto-stop.
+                    # Keep the callback cheap — no logging/allocation here.
+                    self._capped = True
+                    return
                 self._chunks.append(indata[:, 0].copy())
+                self._sample_count += frames
 
     def _ensure_stream(self, retries: int = 3, retry_delay: float = 1.0):
         if self._stream is not None:
@@ -105,6 +121,8 @@ class AudioRecorder:
     def start_recording(self):
         with self._lock:
             self._chunks = []
+            self._sample_count = 0
+            self._capped = False
         self._ensure_stream()
         self._active = True
 
@@ -113,6 +131,7 @@ class AudioRecorder:
         self._active = False
         with self._lock:
             chunks, self._chunks = self._chunks, []
+            self._sample_count = 0
         if not chunks:
             return np.zeros(0, dtype=np.float32)
         return np.concatenate(chunks)
@@ -121,6 +140,8 @@ class AudioRecorder:
         self._active = False
         with self._lock:
             self._chunks = []
+            self._sample_count = 0
+            self._capped = False
 
     def current_level(self, window: float = 0.05) -> float:
         """RMS loudness of the most recent `window` seconds, 0.0..~1.0.

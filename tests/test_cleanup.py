@@ -75,3 +75,23 @@ def test_empty_list_is_a_noop():
 def test_default_strip_fillers_unchanged_without_custom():
     # regression: builtin behaviour when no custom regex passed
     assert cleanup.strip_fillers("So um I think uh yeah") == "So I think yeah"
+
+
+# ---- silence-hallucination guard ------------------------------------------
+
+def test_known_hallucinations_flagged():
+    for s in ["Thank you.", "Thanks for watching!", "Please subscribe",
+              "you", "Bye.", "  Thank you very much.  "]:
+        assert cleanup.is_probable_hallucination(s), s
+
+
+def test_real_short_sentences_not_flagged():
+    # whole-string match only — a real short sentence must survive
+    for s in ["Thank you Sarah", "please subscribe to the newsletter today",
+              "buy milk", "the cat sat", "thanks for the report Dave"]:
+        assert not cleanup.is_probable_hallucination(s), s
+
+
+def test_empty_is_hallucination():
+    assert cleanup.is_probable_hallucination("")
+    assert cleanup.is_probable_hallucination("   ")

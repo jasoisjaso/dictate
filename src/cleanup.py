@@ -11,6 +11,35 @@ log = logging.getLogger("dictate.cleanup")
 
 FILLERS = ["um", "uh", "erm", "uhh", "umm", "er", "ah"]
 
+# Phrases faster-whisper/Whisper confidently emits on silence or near-silent
+# audio (the infamous "no speech -> subscribe" hallucinations). If the WHOLE
+# transcript is just one of these, it's almost certainly a hallucination on an
+# empty take, so we drop it rather than typing it into the user's document.
+# Kept lowercase, punctuation-stripped for comparison.
+_HALLUCINATION_PHRASES = frozenset({
+    "thank you", "thank you.", "thanks for watching", "thanks for watching!",
+    "thank you for watching", "thank you for watching!", "please subscribe",
+    "please subscribe.", "subscribe", "like and subscribe",
+    "thanks for watching!", "you", "bye", "bye.", "okay", "ok",
+    "so", ".", "..", "...", "mm", "mhm", "hmm", "yeah", "the",
+    "thank you very much", "thank you very much.", "thank you.",
+    "thank you for watching.", "please subscribe to my channel",
+    "thanks", "thanks.", "i'm sorry", "i'm sorry.",
+})
+
+
+def is_probable_hallucination(text: str) -> bool:
+    """True if `text` is almost certainly a silence hallucination (the whole
+    transcript is a single known filler phrase). Only fires on WHOLE-string
+    matches so real short sentences ("Thank you, Sarah") are never dropped."""
+    if not text:
+        return True
+    norm = re.sub(r"[^a-z' ]", "", text.lower()).strip()
+    norm = re.sub(r"\s+", " ", norm)
+    if not norm:
+        return True  # nothing but whitespace/punctuation -> treat as empty
+    return norm in _HALLUCINATION_PHRASES
+
 
 def _build_filler_re(words):
     """Compile a whole-word, case-insensitive filler matcher from `words`.

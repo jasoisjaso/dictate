@@ -101,6 +101,10 @@ Audio is processed in memory on your machine and thrown away. Nothing is
 recorded to disk, nothing is uploaded anywhere, ever. The only network
 traffic is the one-time model download from Hugging Face.
 
+The activity log (`%LOCALAPPDATA%\TranscribeDictate\dictate.log`) records
+timings and errors only — the words you dictate are **not** written to it at
+the normal log level, and the log auto-rotates so it can't grow without bound.
+
 ## Build it yourself (developers)
 
 ```
