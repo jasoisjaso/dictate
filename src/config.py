@@ -6,7 +6,10 @@ import logging
 import os
 import re
 import sys
-import tomllib
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:
+    import tomli as tomllib  # Python 3.10 backport (pip install tomli)
 
 try:
     from . import paths
