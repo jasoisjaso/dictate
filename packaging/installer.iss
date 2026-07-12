@@ -6,7 +6,7 @@
   #define Variant "gpu"
 #endif
 #define AppName "Dictate"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #define AppExe "Dictate.exe"
 
 [Setup]

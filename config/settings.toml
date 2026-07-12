@@ -46,3 +46,28 @@ ollama_endpoint = "http://127.0.0.1:11434"
 [audio]
 # input_device = 3               # uncomment to pin a specific microphone
                                  # (see Settings window for the device list)
+
+[injection]
+mode = "auto"                    # auto | type | paste
+                                 # auto: short text is typed (native feel),
+                                 # long or multi-line text is pasted via a
+                                 # clipboard swap (instant; clipboard restored)
+paste_threshold = 300            # characters before auto switches to paste
+
+[feedback]
+sounds = true                    # short beep on record start/stop
+
+[preview]
+live_preview = true              # show what it's hearing in the pill while
+                                 # you talk (GPU builds only; CPU skips it)
+
+# ---- context-aware per-app formatting --------------------------------------
+# Dictate looks at which app has focus when you start talking and adapts.
+# Built-in defaults cover terminals/IDEs (verbatim: no sentence-casing, no
+# filler removal), chat apps (casual tone for the Ollama polish pass) and
+# email (professional tone). Add your own like this:
+#
+# [app_profiles.notes]
+# match = ["Obsidian.exe", "Notion.exe"]
+# verbatim = false
+# tone = "casual"

@@ -59,13 +59,19 @@ def _ollama_generate(prompt: str, model: str, endpoint: str,
 
 
 def ollama_polish(text: str, model: str, endpoint: str,
-                  timeout: float = 4.0) -> str:
+                  timeout: float = 4.0, tone: str | None = None) -> str:
     """Grammar/punctuation pass through a local Ollama model.
+    tone ("casual"/"professional") adapts phrasing to the target app.
     Fail-open: any error or empty answer returns the original text."""
     if not text.strip():
         return text
+    prompt = _POLISH_PROMPT
+    if tone:
+        prompt = prompt.replace(
+            "Fix grammar and punctuation",
+            f"Fix grammar and punctuation and keep a {tone} register")
     try:
-        out = _ollama_generate(_POLISH_PROMPT + text, model, endpoint, timeout)
+        out = _ollama_generate(prompt + text, model, endpoint, timeout)
         return out if out else text
     except Exception as ex:
         log.debug("ollama polish unavailable (%s); using raw text", ex)

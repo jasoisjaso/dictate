@@ -68,6 +68,22 @@ def configure_cuda_dll_search_paths():
     return registered
 
 
+def choose_injection(text: str, mode: str = "auto",
+                     paste_threshold: int = 300) -> str:
+    """'type' (SendInput per char) or 'paste' (clipboard + Ctrl+V).
+
+    Typing is invisible to the clipboard and feels native for short bursts.
+    Pasting is instant for long text and — crucially — the only safe option
+    for multi-line output in auto mode, because a typed Enter can fire
+    "send" in chat apps before the message is complete.
+    """
+    if mode in ("type", "paste"):
+        return mode
+    if "\n" in text:
+        return "paste"
+    return "paste" if len(text) > paste_threshold else "type"
+
+
 # ---- SendInput Unicode injection -------------------------------------------
 
 INPUT_KEYBOARD = 1
@@ -156,6 +172,83 @@ if IS_WINDOWS:
             total += _send_inputs(events)
         return total // 2
 
+    VK_CONTROL = 0x11
+    VK_V = 0x56
+    CF_UNICODETEXT = 13
+    GMEM_MOVEABLE = 0x0002
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    def _clipboard_get_text():
+        """Current clipboard text, or None if empty/non-text (can't restore those)."""
+        if not user32.OpenClipboard(None):
+            return None
+        try:
+            h = user32.GetClipboardData(CF_UNICODETEXT)
+            if not h:
+                return None
+            ptr = kernel32.GlobalLock(h)
+            if not ptr:
+                return None
+            try:
+                return ctypes.wstring_at(ptr)
+            finally:
+                kernel32.GlobalUnlock(h)
+        finally:
+            user32.CloseClipboard()
+
+    def _clipboard_set_text(text: str) -> bool:
+        data = text.encode("utf-16le") + b"\x00\x00"
+        h = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+        if not h:
+            return False
+        ptr = kernel32.GlobalLock(h)
+        ctypes.memmove(ptr, data, len(data))
+        kernel32.GlobalUnlock(h)
+        if not user32.OpenClipboard(None):
+            kernel32.GlobalFree(h)
+            return False
+        try:
+            user32.EmptyClipboard()
+            if not user32.SetClipboardData(CF_UNICODETEXT, h):
+                kernel32.GlobalFree(h)
+                return False
+            return True  # system owns h now
+        finally:
+            user32.CloseClipboard()
+
+    def _vk_event(vk, flags=0):
+        inp = INPUT()
+        inp.type = INPUT_KEYBOARD
+        inp.ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=flags, time=0, dwExtraInfo=None)
+        return inp
+
+    def inject_text_via_paste(text_string: str, restore_delay: float = 0.3):
+        """Put text on the clipboard, press Ctrl+V, then restore what was there.
+
+        Restores only text contents; images/files on the clipboard are lost —
+        that trade-off is logged. Returns True if the paste keystroke was sent.
+        """
+        import time as _time
+        old = _clipboard_get_text()
+        if old is None:
+            log.info("clipboard had no restorable text; previous contents will be lost")
+        if not _clipboard_set_text(text_string):
+            log.error("could not write clipboard; falling back to typed injection")
+            inject_text_native_unicode(text_string)
+            return False
+        _send_inputs([
+            _vk_event(VK_CONTROL),
+            _vk_event(VK_V),
+            _vk_event(VK_V, KEYEVENTF_KEYUP),
+            _vk_event(VK_CONTROL, KEYEVENTF_KEYUP),
+        ])
+        # let the target app read the clipboard before we restore it
+        _time.sleep(restore_delay)
+        if old is not None:
+            _clipboard_set_text(old)
+        return True
+
     def inject_backspaces(count: int):
         """Press Backspace `count` times ("scratch that")."""
         if count <= 0:
@@ -175,6 +268,9 @@ else:
     def inject_text_native_unicode(text_string: str, chunk_chars: int = 256):
         log.warning("not on Windows — injection unavailable, text was: %r", text_string[:80])
         return 0
+
+    def inject_text_via_paste(text_string: str, restore_delay: float = 0.3):
+        return False
 
     def inject_backspaces(count: int):
         return 0

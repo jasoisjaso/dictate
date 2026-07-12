@@ -22,7 +22,8 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from .audio import AudioRecorder
 from .engine import WhisperTranscriber
 from .overlay import WaveformOverlay
-from . import win32_input
+from . import appcontext, win32_input
+from .history import History
 
 log = logging.getLogger("dictate.ui")
 
@@ -122,6 +123,18 @@ class DictationTrayApp(QObject):
         vad = cfg.get("vad", {})
         self.silence_timeout = float(vad.get("silence_timeout", 2.0))
 
+        inj = cfg.get("injection", {})
+        self.inject_mode = inj.get("mode", "auto")
+        self.paste_threshold = int(inj.get("paste_threshold", 300))
+        self.sounds = bool(cfg.get("feedback", {}).get("sounds", True))
+        self.live_preview = bool(cfg.get("preview", {}).get("live_preview", True))
+        self.history = History(limit=25)
+        self.app_profiles = dict(appcontext.DEFAULT_PROFILES)
+        self.app_profiles.update(cfg.get("app_profiles", {}))
+        self._rec_app = None
+        self._rec_profile = {}
+        self._preview_stop = threading.Event()
+
         hk = cfg.get("hotkeys", {})
         self.mode = hk.get("mode", "push_to_talk").strip().lower()
         self.ptt_name = hk.get("push_to_talk_key", "ctrl_r")
@@ -171,6 +184,9 @@ class DictationTrayApp(QObject):
         act_settings = QAction("Settings…")
         act_settings.triggered.connect(self._open_settings)
         menu.addAction(act_settings)
+        act_history = QAction("History…")
+        act_history.triggered.connect(self._open_history)
+        menu.addAction(act_history)
         menu.addSeparator()
         act_quit = QAction("Quit")
         act_quit.triggered.connect(self._quit)
@@ -178,6 +194,42 @@ class DictationTrayApp(QObject):
         self.tray.setContextMenu(menu)
         self._menu = menu
         self._act_settings = act_settings
+
+    def _open_history(self):
+        """Recent dictations (session-only, never written to disk) with
+        one-click copy — the rescue hatch when text landed in the wrong app."""
+        from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel,
+                                       QListWidget, QListWidgetItem,
+                                       QPushButton, QVBoxLayout)
+        dlg = QDialog()
+        dlg.setWindowTitle("Dictate — History (this session)")
+        dlg.setMinimumSize(480, 360)
+        v = QVBoxLayout(dlg)
+        items = self.history.items()
+        if not items:
+            v.addWidget(QLabel("Nothing dictated yet this session."))
+        lst = QListWidget()
+        for e in items:
+            where = f"  →  {e.app}" if e.app else ""
+            it = QListWidgetItem(f"[{e.when}]{where}\n{e.text}")
+            it.setData(0x0100, e.text)  # Qt.UserRole
+            lst.addItem(it)
+        v.addWidget(lst)
+        row = QHBoxLayout()
+        b_copy = QPushButton("Copy selected")
+
+        def do_copy():
+            it = lst.currentItem()
+            if it:
+                QApplication.clipboard().setText(it.data(0x0100))
+        b_copy.clicked.connect(do_copy)
+        b_close = QPushButton("Close")
+        b_close.clicked.connect(dlg.accept)
+        row.addWidget(b_copy)
+        row.addStretch(1)
+        row.addWidget(b_close)
+        v.addLayout(row)
+        dlg.exec()
 
     def _open_settings(self, first_run: bool = False):
         from .settings_gui import SettingsDialog
@@ -339,22 +391,36 @@ class DictationTrayApp(QObject):
     def _begin_recording(self) -> bool:
         if self.state != IDLE:
             return False
+        self._rec_app = appcontext.foreground_exe()
+        self._rec_profile = appcontext.resolve_profile(self._rec_app,
+                                                       self.app_profiles)
+        if self._rec_profile:
+            log.info("app context: %s -> profile %s", self._rec_app,
+                     self._rec_profile.get("_profile"))
         try:
             self.recorder.start_recording()
         except RuntimeError as ex:
             self._on_error(str(ex))
             return False
         self._set_state(RECORDING)
-        self.overlay.show_recording()
+        preview_on = (self.live_preview
+                      and self.engine.active_device == "cuda")
+        self.overlay.show_recording(preview=preview_on)
+        if preview_on:
+            self._preview_stop.clear()
+            threading.Thread(target=self._preview_worker, daemon=True).start()
+        self._beep(880, 70)
         return True
 
     def _stop_and_transcribe(self):
         if self.state != RECORDING:
             return
         self._monitor_stop.set()
+        self._preview_stop.set()
         audio = self.recorder.stop_recording()
         self._set_state(TRANSCRIBING)
         self.overlay.show_processing()
+        self._beep(660, 70)
         threading.Thread(target=self._transcribe_worker, args=(audio,),
                          daemon=True).start()
 
@@ -378,6 +444,7 @@ class DictationTrayApp(QObject):
         if self.state != RECORDING:
             return
         self._monitor_stop.set()
+        self._preview_stop.set()
         self._ptt_down = False
         self.recorder.abort()
         self.overlay.hide_overlay()
@@ -393,8 +460,14 @@ class DictationTrayApp(QObject):
             win32_input.inject_backspaces(self.last_injected_len)
             self.last_injected_len = 0
             return
+        self.history.add(text, app=self._rec_app)
         payload = text if text.endswith("\n") else text + " "
-        win32_input.inject_text_native_unicode(payload)
+        how = win32_input.choose_injection(payload, mode=self.inject_mode,
+                                           paste_threshold=self.paste_threshold)
+        if how == "paste":
+            win32_input.inject_text_via_paste(payload)
+        else:
+            win32_input.inject_text_native_unicode(payload)
         self.last_injected_len = len(payload)
 
     def _on_error(self, msg: str):
@@ -409,13 +482,43 @@ class DictationTrayApp(QObject):
         try:
             t0 = time.time()
             raw = self.engine.transcribe_audio_buffer(audio)
-            text = self.engine.post_process(raw)
+            text = self.engine.post_process(raw, profile=self._rec_profile)
             log.info("transcribed %.1fs audio in %.1fs: %r",
                      len(audio) / 16000, time.time() - t0, text)
             self._sig_result.emit(text)
         except Exception as ex:
             log.exception("transcription failed")
             self._sig_error.emit(f"Transcription failed: {ex}")
+
+    def _preview_worker(self):
+        """Live transcript while recording (GPU only): re-transcribe the whole
+        take roughly once a second and stream the tail into the overlay pill.
+        The engine lock serialises us against the final pass, so worst case
+        the final transcription waits ~1s for the last preview chunk."""
+        while not self._preview_stop.wait(1.0):
+            if self.state != RECORDING or self.engine._model is None:
+                continue
+            dur = self.recorder.duration
+            if dur < 0.8 or dur > 90:      # nothing to show / too long to re-run
+                continue
+            try:
+                snapshot = self.recorder.peek_tail(dur)
+                raw = self.engine.transcribe_audio_buffer(snapshot)
+                if raw and not self._preview_stop.is_set():
+                    self.overlay.set_preview(raw)
+            except Exception as ex:
+                log.debug("preview pass failed: %s", ex)
+
+    def _beep(self, freq: int, ms: int):
+        if not self.sounds:
+            return
+        def _play():
+            try:
+                import winsound
+                winsound.Beep(freq, ms)
+            except Exception:
+                pass
+        threading.Thread(target=_play, daemon=True).start()
 
     def _silence_monitor(self):
         had_speech = False

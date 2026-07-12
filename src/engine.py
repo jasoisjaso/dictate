@@ -132,15 +132,24 @@ class WhisperTranscriber:
 
     # ---- post-processing -----------------------------------------------
 
-    def post_process(self, text: str) -> str:
+    def post_process(self, text: str, profile: dict | None = None) -> str:
+        """profile comes from appcontext.resolve_profile() for the app that
+        had focus when recording started. verbatim=True keeps the words
+        exactly as spoken (terminals/IDEs); tone feeds the Ollama pass."""
         if not text:
             return ""
+        profile = profile or {}
+        verbatim = bool(profile.get("verbatim"))
         for phrase, repl in PUNCTUATION_LEXICON:
             # eat punctuation whisper may have attached to the spoken keyword
             text = re.sub(
                 rf"[\s,.]*\b{re.escape(phrase)}\b[.,]?",
                 repl.replace("\\", "\\\\"),
                 text, flags=re.IGNORECASE)
+        if verbatim:
+            # terminals and editors get the words untouched: no filler
+            # stripping, no sentence casing, no trailing-period logic
+            return self._fix_spacing(text).strip(" ")
         try:
             from . import cleanup as _cleanup
         except ImportError:
@@ -149,7 +158,8 @@ class WhisperTranscriber:
                               dictionary=self.dictionary)
         if self.ollama_polish:
             text = _cleanup.ollama_polish(
-                text, self.ollama_model, self.ollama_endpoint)
+                text, self.ollama_model, self.ollama_endpoint,
+                tone=profile.get("tone"))
         text = self._fix_spacing(text)
         text = self._apply_casing(text)
         words = re.findall(r"[\w']+", text)
