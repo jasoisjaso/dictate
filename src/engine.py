@@ -54,6 +54,20 @@ class WhisperTranscriber:
         self.initial_prompt = w.get("initial_prompt", "") or None
         cl = cfg.get("cleanup", {})
         self.remove_fillers = bool(cl.get("remove_fillers", True))
+        # Custom filler list: built-in defaults + the user's own words.
+        # `custom_fillers` is a list of strings in [cleanup]; single-word or
+        # multi-word ("you know") are both fine. Merged case-insensitively.
+        try:
+            from . import cleanup as _cl_mod
+        except ImportError:
+            import cleanup as _cl_mod
+        extra = cl.get("custom_fillers", []) or []
+        if isinstance(extra, str):
+            # tolerate a comma-separated string if someone hand-edits the TOML
+            extra = [p for p in re.split(r",", extra)]
+        merged = list(_cl_mod.FILLERS) + [str(w) for w in extra]
+        self.custom_fillers = [w for w in (str(x).strip() for x in extra) if w]
+        self.filler_re = _cl_mod._build_filler_re(merged)
         self.ollama_polish = bool(cl.get("ollama_polish", False))
         self.ollama_model = cl.get("ollama_model", "hermes4")
         self.ollama_endpoint = cl.get("ollama_endpoint", "http://127.0.0.1:11434")
@@ -155,7 +169,8 @@ class WhisperTranscriber:
         except ImportError:
             import cleanup as _cleanup
         text = _cleanup.clean(text, remove_fillers=self.remove_fillers,
-                              dictionary=self.dictionary)
+                              dictionary=self.dictionary,
+                              filler_re=self.filler_re)
         if self.ollama_polish:
             text = _cleanup.ollama_polish(
                 text, self.ollama_model, self.ollama_endpoint,

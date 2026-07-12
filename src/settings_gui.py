@@ -8,7 +8,7 @@ import platform
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
-    QHBoxLayout, QHeaderView, QLabel, QPushButton, QRadioButton,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QRadioButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
@@ -192,6 +192,15 @@ class SettingsDialog(QDialog):
         self.chk_fillers = QCheckBox('Remove filler words ("um", "uh", …)')
         self.chk_fillers.setChecked(bool(cl.get("remove_fillers", True)))
         v.addWidget(self.chk_fillers)
+        v.addWidget(QLabel("Extra filler words to strip "
+                           "(comma-separated, e.g. like, you know, basically):"))
+        _extra = cl.get("custom_fillers", []) or []
+        if isinstance(_extra, str):
+            _extra = [p.strip() for p in _extra.split(",")]
+        self.ed_fillers = QLineEdit(", ".join(str(x).strip()
+                                              for x in _extra if str(x).strip()))
+        self.ed_fillers.setPlaceholderText("like, you know, basically, actually")
+        v.addWidget(self.ed_fillers)
         v.addWidget(QLabel("My words (teach it names and jargon):"))
         self.tbl = QTableWidget(0, 2)
         self.tbl.setHorizontalHeaderLabels(["When I say…", "Type this"])
@@ -257,6 +266,8 @@ class SettingsDialog(QDialog):
             },
             "cleanup": {
                 "remove_fillers": self.chk_fillers.isChecked(),
+                "custom_fillers": [w for w in (
+                    p.strip() for p in self.ed_fillers.text().split(",")) if w],
             },
             "dictionary": {},
         }

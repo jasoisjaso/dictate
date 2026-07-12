@@ -10,8 +10,35 @@ import urllib.request
 log = logging.getLogger("dictate.cleanup")
 
 FILLERS = ["um", "uh", "erm", "uhh", "umm", "er", "ah"]
-_FILLER_RE = re.compile(r"\b(?:%s)\b[ ,]*" % "|".join(map(re.escape, FILLERS)),
-                        re.IGNORECASE)
+
+
+def _build_filler_re(words):
+    """Compile a whole-word, case-insensitive filler matcher from `words`.
+    Multi-word entries (e.g. "you know", "sort of") are supported. Empty /
+    blank entries are ignored so a stray blank row can never blow up the regex
+    (an empty alternative would otherwise match at every position)."""
+    cleaned = []
+    seen = set()
+    for w in words or ():
+        w = (w or "").strip()
+        if not w:
+            continue
+        low = w.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        # allow internal runs of whitespace in multi-word fillers to match any
+        # spacing whisper produced ("you know" vs "you  know")
+        cleaned.append(r"\s+".join(map(re.escape, w.split())))
+    if not cleaned:
+        # nothing to strip -> a regex that never matches
+        return re.compile(r"(?!x)x")
+    # longest first so "you know" wins over a bare "you" if both are present
+    cleaned.sort(key=len, reverse=True)
+    return re.compile(r"\b(?:%s)\b[ ,]*" % "|".join(cleaned), re.IGNORECASE)
+
+
+_FILLER_RE = _build_filler_re(FILLERS)
 
 _POLISH_PROMPT = (
     "Fix grammar and punctuation of this dictated text. Keep the meaning, "
@@ -20,8 +47,9 @@ _POLISH_PROMPT = (
 )
 
 
-def strip_fillers(text: str) -> str:
-    out = _FILLER_RE.sub(" ", text)
+def strip_fillers(text: str, filler_re: "re.Pattern | None" = None) -> str:
+    rx = filler_re if filler_re is not None else _FILLER_RE
+    out = rx.sub(" ", text)
     # collapse runs of spaces/tabs ONLY — newlines from spoken "new line"
     # commands must survive this pass
     out = re.sub(r"[ \t]{2,}", " ", out)
@@ -37,9 +65,10 @@ def apply_dictionary(text: str, mapping: dict[str, str]) -> str:
 
 
 def clean(text: str, *, remove_fillers: bool,
-          dictionary: dict[str, str] | None) -> str:
+          dictionary: dict[str, str] | None,
+          filler_re: "re.Pattern | None" = None) -> str:
     if remove_fillers:
-        text = strip_fillers(text)
+        text = strip_fillers(text, filler_re)
     if dictionary:
         text = apply_dictionary(text, dictionary)
     return text

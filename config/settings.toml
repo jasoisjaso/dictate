@@ -32,6 +32,11 @@ strip_trailing_period_short = true
 
 [cleanup]
 remove_fillers = true            # strip "um", "uh", "erm", ...
+custom_fillers = []              # YOUR extra filler words to strip, on top of the
+                                 # built-in um/uh/erm list. e.g.
+                                 # custom_fillers = ["like", "you know", "basically"]
+                                 # Multi-word entries work. Edit this here or in the
+                                 # Settings window ("Extra filler words to strip").
 ollama_polish = false            # optional grammar pass via local Ollama (power feature;
                                  # fail-open: dictation never blocks if Ollama is down)
 ollama_model = "hermes4"
