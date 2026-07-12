@@ -29,12 +29,34 @@ person can actually use.
 - **Hold Right Ctrl and talk. Let go when you're done.** Your words get
   typed into whatever app you're in — email, Word, chat, browser, anything.
 - While you talk, a small pill at the bottom of the screen shows a live
-  waveform so you know it's hearing you. Blue shimmer = it's thinking.
+  waveform **and a live transcript of what it's hearing** (GPU builds), so
+  you know it heard you right before you let go. Blue shimmer = thinking.
 - Say punctuation when you want it: "period", "comma", "question mark",
   "new line", "new paragraph", "bullet point".
 - Said something wrong? Say **"scratch that"** — the last thing it typed
   gets deleted.
 - Tray icon colours: green = ready, red = recording, blue = transcribing.
+
+## What makes it different
+
+- **Knows what app you're in.** Dictating into a terminal or IDE? You get
+  your words verbatim — no sentence-casing, no cleanup mangling a command.
+  Chat apps read casual, email reads professional (tones feed the optional
+  local-LLM polish). Add your own app rules in `[app_profiles]` — this is
+  the "Super Mode" context awareness the paid tools charge for, running
+  100% locally.
+- **Live transcript preview** in the pill while you speak (GPU builds) —
+  the most-requested dictation feature on Reddit, missing from nearly every
+  free tool.
+- **Smart injection.** Short phrases are typed like real keystrokes; long
+  or multi-line text is pasted instantly via a clipboard swap (your
+  clipboard is restored afterwards). A typed Enter can't accidentally
+  "send" a half-finished chat message.
+- **Session history** (tray → History…): every dictation from this session
+  with one-click copy — the rescue hatch when text landed in the wrong
+  window. Kept in memory only, never written to disk.
+- **Audio cues**: a soft beep on record start/stop so you never talk into
+  the void. Turn off in `[feedback]`.
 
 ## Settings (right-click the tray icon → Settings…)
 
