@@ -64,3 +64,40 @@ def test_quotes_and_special_chars_survive(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     config.save({"dictionary": {"say this": 'the "big" boss\\co'}})
     assert config.load(defaults={})["dictionary"]["say this"] == 'the "big" boss\\co'
+
+
+def test_corrupt_config_does_not_crash_and_is_salvaged(tmp_path, monkeypatch):
+    """The real-world bug: an older build wrote an unquoted multi-word key
+    ('Purchase Order = "PO"'), which is invalid TOML and crashed startup.
+    load() must now recover the valid sections instead of raising."""
+    _isolate(tmp_path, monkeypatch)
+    (tmp_path / "settings.toml").write_text(
+        "[whisper]\n"
+        'model_size = "auto"\n'
+        'language = "en"\n\n'
+        "[hotkeys]\n"
+        'mode = "push_to_talk"\n\n'
+        "[dictionary]\n"
+        'Purchase Order = "PO"\n',      # <-- invalid: unquoted key with a space
+        encoding="utf-8")
+    cfg = config.load(defaults={})       # must NOT raise
+    assert cfg["whisper"]["model_size"] == "auto"
+    assert cfg["hotkeys"]["mode"] == "push_to_talk"
+    # the corrupt file is backed up, not left in place to crash next boot
+    baks = list(tmp_path.glob("settings.toml.corrupt-*.bak"))
+    assert len(baks) == 1
+
+
+def test_corrupt_config_keeps_good_keys_in_same_section(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    (tmp_path / "settings.toml").write_text(
+        "[dictionary]\n"
+        'woolies = "Woolworths"\n'        # good
+        'Purchase Order = "PO"\n'         # bad
+        'helloacrylic = "Hello Acrylic"\n',  # good
+        encoding="utf-8")
+    cfg = config.load(defaults={})
+    d = cfg.get("dictionary", {})
+    assert d.get("woolies") == "Woolworths"
+    assert d.get("helloacrylic") == "Hello Acrylic"
+    assert "Purchase Order" not in d

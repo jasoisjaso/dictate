@@ -2,6 +2,7 @@
 Writes only go to the appdata copy (install dir stays read-only)."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 import sys
@@ -29,6 +30,68 @@ def _read(path: str) -> dict:
             return tomllib.load(f)
     except FileNotFoundError:
         return {}
+    except (tomllib.TOMLDecodeError, OSError, ValueError) as ex:
+        # A corrupt user settings file must NEVER stop the app from starting.
+        # (Older builds could write an unquoted multi-word key like
+        # `Purchase Order = "PO"`, which is invalid TOML.) Try to salvage the
+        # valid lines, back up the broken file, and carry on with what we got.
+        log = logging.getLogger("dictate.config")
+        log.warning("settings file %s is invalid (%s); attempting recovery", path, ex)
+        recovered = _salvage(path)
+        try:
+            import time as _t
+            os.replace(path, path + f".corrupt-{int(_t.time())}.bak")
+        except OSError:
+            pass
+        if recovered:
+            log.warning("recovered %d settings section(s) from the broken file",
+                        len(recovered))
+        return recovered
+
+
+def _salvage(path: str) -> dict:
+    """Best-effort: re-parse a broken TOML file one section at a time, keeping
+    only the lines/sections that parse. Anything unparseable is skipped so a
+    single bad key can't wipe every setting."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            raw = f.read()
+    except OSError:
+        return {}
+    out: dict = {}
+    section = None
+    buf: list[str] = []
+
+    def _flush(sec, lines):
+        if sec is None:
+            return
+        try:
+            parsed = tomllib.loads("[" + sec + "]\n" + "\n".join(lines))
+            # merge (handles dotted section names too)
+            for k, v in parsed.items():
+                out[k] = v
+        except Exception:
+            # drop bad lines individually, keep the good ones in this section
+            good = {}
+            for ln in lines:
+                try:
+                    good.update(tomllib.loads(ln))
+                except Exception:
+                    continue
+            if good or sec not in out:
+                out.setdefault(sec, {})
+                if isinstance(out.get(sec), dict):
+                    out[sec].update(good)
+
+    for line in raw.splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            _flush(section, buf)
+            section, buf = s[1:-1], []
+        else:
+            buf.append(line)
+    _flush(section, buf)
+    return out
 
 
 def _deep_merge(base: dict, over: dict) -> dict:
