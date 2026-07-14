@@ -671,6 +671,19 @@ class DictationTrayApp(QObject):
             self.overlay.flash_toast("didn't catch that")
             return
 
+        # If the result is ONLY whitespace/newlines (e.g. user said "novi red"
+        # or "new line" on its own), inject it directly as keystrokes rather
+        # than going through the paste path. A clipboard paste of just "\n"
+        # can act as Enter in some apps (submit, send, execute). Typing it
+        # via SendInput is safer and more predictable.
+        import re as _re
+        if text.strip() == "" and text:
+            # Pure whitespace/newline — type it directly
+            win32_input.inject_text_native_unicode(text)
+            self.last_injected_len = len(text)
+            self.last_injected_text = text
+            return
+
         # --- voice-edit commands (operate on the last dictation) -----------
         cmd = voice_commands.parse(text)
         if cmd is not None:
