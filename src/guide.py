@@ -110,6 +110,32 @@ class _Illustration(QWidget):
         p.drawText(QRectF(24, 118, w - 48, 24), Qt.AlignLeft, "the quick")
         self._caption(p, w, h, "Fix mistakes by voice — no keyboard needed")
 
+    # ---- dictation modes ------------------------------------------------
+    def _draw_modes(self, p, w, h):
+        modes = [("Auto", "detects app", ACCENT_LT),
+                 ("Prose", "full cleanup", GREEN),
+                 ("Code", "verbatim", "#e0b252"),
+                 ("Email", "professional", BLUE)]
+        y = 36
+        for name, desc, col in modes:
+            p.setBrush(QColor(30, 34, 42))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(QRectF(24, y, w - 48, 30), 8, 8)
+            # mode tag
+            p.setBrush(QColor(col))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(QRectF(34, y + 5, 56, 20), 10, 10)
+            p.setPen(QColor("#0f1116"))
+            p.setFont(QFont("Segoe UI", 8, QFont.DemiBold))
+            p.drawText(QRectF(34, y + 5, 56, 20), Qt.AlignCenter, name)
+            # description
+            p.setPen(QColor(TEXT))
+            p.setFont(QFont("Segoe UI", 9))
+            p.drawText(QRectF(100, y, w - 120, 30),
+                       Qt.AlignVCenter | Qt.AlignLeft, desc)
+            y += 36
+        self._caption(p, w, h, "Press F7 to cycle modes — Auto -> Prose -> Code -> Email")
+
     # ---- per-app profiles ---------------------------------------------
     def _draw_profiles(self, p, w, h):
         rows = [("Terminal", "verbatim", "#e0b252"),
@@ -227,15 +253,22 @@ class GuideDialog(QDialog):
                      "&nbsp;&nbsp;🔵 <b>Blue</b> — thinking (turning speech into text)"},
             {"kind": "command", "title": "Fix it by voice",
              "body": "You don't need the keyboard to correct things:<br><br>"
-                     "&nbsp;&nbsp;• <b>“scratch that”</b> — delete the whole last bit<br>"
-                     "&nbsp;&nbsp;• <b>“delete last word”</b> (or “…last three words”)<br>"
-                     "&nbsp;&nbsp;• <b>“capitalize that”</b> / <b>“all caps that”</b> / "
-                     "<b>“lowercase that”</b><br><br>"
-                     "Say punctuation too: “period”, “comma”, “question mark”, "
-                     "“new line”, “new paragraph”, “bullet point”."},
+                     "&nbsp;&nbsp;• <b>\"scratch that\"</b> — delete the whole last bit<br>"
+                     "&nbsp;&nbsp;• <b>\"delete last word\"</b> (or \"…last three words\")<br>"
+                     "&nbsp;&nbsp;• <b>\"capitalize that\"</b> / <b>\"all caps that\"</b> / "
+                     "<b>\"lowercase that\"</b><br><br>"
+                     "Say punctuation too: \"period\", \"comma\", \"question mark\", "
+                     "\"new line\", \"new paragraph\", \"bullet point\"."},
+            {"kind": "modes", "title": "Switch modes on the fly",
+             "body": f"Press <b>F7</b> to cycle between modes:<br><br>"
+                     "&nbsp;&nbsp;• <b>Auto</b> — detects the app (terminal = verbatim, chat = casual)<br>"
+                     "&nbsp;&nbsp;• <b>Prose</b> — full cleanup, sentence casing (default)<br>"
+                     "&nbsp;&nbsp;• <b>Code</b> — verbatim, no casing, no cleanup<br>"
+                     "&nbsp;&nbsp;• <b>Email</b> — professional tone<br><br>"
+                     "The active mode shows in the pill and the tray menu."},
             {"kind": "profiles", "title": "It adapts to each app",
-             "body": "Dictate notices which app is in front and changes how it "
-                     "writes — automatically:<br><br>"
+             "body": "In <b>Auto</b> mode, Dictate notices which app is in front "
+                     "and changes how it writes — automatically:<br><br>"
                      "&nbsp;&nbsp;• <b>Terminals / editors</b> → verbatim, no auto-casing "
                      "(so a command isn't mangled)<br>"
                      "&nbsp;&nbsp;• <b>Email</b> → professional tone<br>"
@@ -247,12 +280,14 @@ class GuideDialog(QDialog):
                      "<b>Settings → My words</b> and Dictate will both spell them "
                      "right and expand shorthand as you speak.<br><br>"
                      "Add your own filler words to strip in "
-                     "<b>Settings → Extra filler words</b> (e.g. “like”, "
-                     "“you know”)."},
+                     "<b>Settings → Extra filler words</b> (e.g. \"like\", "
+                     "\"you know\").<br><br>"
+                     "You can also set up <b>voice macros</b> in the config file — "
+                     "say \"insert my email\" and it types your full address."},
             {"kind": "blank", "title": "You're set 🎉",
              "body": "That's everything. A few tips:<br><br>"
                      "&nbsp;&nbsp;• Landed in the wrong window? "
-                     "<b>Tray → Copy last dictation</b>, or open <b>History…</b><br>"
+                     f"Press <b>F8</b> to copy the last dictation, or open <b>History…</b><br>"
                      "&nbsp;&nbsp;• Change your key, mic, model or language in "
                      "<b>Settings…</b><br>"
                      "&nbsp;&nbsp;• Everything runs on your PC — your voice never "

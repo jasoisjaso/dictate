@@ -36,4 +36,14 @@ def test_small_gpu_downshifts_model():
 
 def test_tier_is_serialisable():
     d = device.choose_tier(cuda=True, vram_gb=8.0).as_dict()
-    assert set(d) == {"device", "compute_type", "model_size"}
+    assert set(d) == {"device", "compute_type", "model_size", "amd_gpu"}
+
+
+def test_amd_flag_defaults_false():
+    t = device.choose_tier(cuda=True, vram_gb=8.0)
+    assert t.amd_gpu is False
+
+
+def test_amd_flag_on_cpu_tier():
+    t = device.choose_tier(cuda=False, vram_gb=0.0)
+    assert t.amd_gpu is False  # choose_tier doesn't set it; detect() does

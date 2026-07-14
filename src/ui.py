@@ -37,6 +37,16 @@ STATE_COLOR = {
     TRANSCRIBING: "#4da3ff",
 }
 
+# Dictation modes — cycle with the mode_cycle_key (default F7).
+# "auto" means: use per-app profile detection (the existing behaviour).
+MODE_NAMES = ["auto", "prose", "code", "email"]
+MODE_LABELS = {
+    "auto": "Auto",
+    "prose": "Prose",
+    "code": "Code",
+    "email": "Email",
+}
+
 
 def _make_icon(color: str) -> QIcon:
     pm = QPixmap(64, 64)
@@ -100,6 +110,8 @@ class DictationTrayApp(QObject):
     _sig_ptt_stop = Signal()
     _sig_toggle = Signal()
     _sig_abort = Signal()
+    _sig_copy_last = Signal()
+    _sig_mode_cycle = Signal()
     _sig_model_ready = Signal(str)
     _sig_result = Signal(str)
     _sig_error = Signal(str)
@@ -121,6 +133,8 @@ class DictationTrayApp(QObject):
         self.last_injected_len = 0
         self.last_injected_text = ""
         self._session_words = 0
+        self._session_start = time.time()
+        self._dict_mode = "auto"  # cycle via F7: auto -> prose -> code -> email
         self._monitor_stop = threading.Event()
 
         vad = cfg.get("vad", {})
@@ -143,6 +157,8 @@ class DictationTrayApp(QObject):
         self.ptt_name = hk.get("push_to_talk_key", "ctrl_r")
         self.toggle_name = hk.get("toggle_key", "f9")
         self.abort_name = hk.get("abort_key", "esc")
+        self.copy_name = hk.get("copy_key", "f8")
+        self.mode_cycle_name = hk.get("mode_cycle_key", "f7")
 
         self.tray = QSystemTrayIcon(_make_icon(STATE_COLOR[LOADING]))
         self._build_menu()
@@ -153,6 +169,8 @@ class DictationTrayApp(QObject):
         self._sig_ptt_stop.connect(self._on_ptt_stop)
         self._sig_toggle.connect(self._on_toggle)
         self._sig_abort.connect(self._on_abort)
+        self._sig_copy_last.connect(self._copy_last)
+        self._sig_mode_cycle.connect(self._cycle_mode)
         self._sig_model_ready.connect(self._on_model_ready)
         self._sig_result.connect(self._on_result)
         self._sig_error.connect(self._on_error)
@@ -186,26 +204,29 @@ class DictationTrayApp(QObject):
 
     def _build_menu(self):
         menu = QMenu()
-        self.act_status = QAction("Loading model…")
+        self.act_status = QAction("Loading model...")
         self.act_status.setEnabled(False)
         menu.addAction(self.act_status)
         self.act_hint = QAction(self._trigger_hint())
         self.act_hint.setEnabled(False)
         menu.addAction(self.act_hint)
-        self.act_stats = QAction("0 words this session")
+        self.act_stats = QAction("0 words · 0 WPM this session")
         self.act_stats.setEnabled(False)
         menu.addAction(self.act_stats)
+        self.act_mode = QAction(f"Mode: {MODE_LABELS[self._dict_mode]}  ({_pretty_key(self.mode_cycle_name)} to cycle)")
+        self.act_mode.setEnabled(False)
+        menu.addAction(self.act_mode)
         menu.addSeparator()
-        act_copy = QAction("Copy last dictation")
+        act_copy = QAction(f"Copy last dictation  ({_pretty_key(self.copy_name)})")
         act_copy.triggered.connect(self._copy_last)
         menu.addAction(act_copy)
-        act_settings = QAction("Settings…")
+        act_settings = QAction("Settings...")
         act_settings.triggered.connect(self._open_settings)
         menu.addAction(act_settings)
-        act_history = QAction("History…")
+        act_history = QAction("History...")
         act_history.triggered.connect(self._open_history)
         menu.addAction(act_history)
-        act_guide = QAction("How to use…")
+        act_guide = QAction("How to use...")
         act_guide.triggered.connect(self._open_guide)
         menu.addAction(act_guide)
         menu.addSeparator()
@@ -219,8 +240,20 @@ class DictationTrayApp(QObject):
     def _update_stats_label(self):
         if hasattr(self, "act_stats"):
             w = self._session_words
+            elapsed = max(1.0, time.time() - self._session_start)
+            wpm = int(w / (elapsed / 60.0))
             self.act_stats.setText(
-                f"{w:,} word{'s' if w != 1 else ''} this session")
+                f"{w:,} word{'s' if w != 1 else ''} · {wpm} WPM this session")
+
+    def _cycle_mode(self):
+        """Cycle through dictation modes: auto -> prose -> code -> email -> auto."""
+        idx = MODE_NAMES.index(self._dict_mode)
+        self._dict_mode = MODE_NAMES[(idx + 1) % len(MODE_NAMES)]
+        label = MODE_LABELS[self._dict_mode]
+        if hasattr(self, "act_mode"):
+            self.act_mode.setText(
+                f"Mode: {label}  ({_pretty_key(self.mode_cycle_name)} to cycle)")
+        self.overlay.flash_toast(f"Mode: {label}")
 
     def _copy_last(self):
         """Copy the most recent dictation to the clipboard — the fast rescue
@@ -290,6 +323,8 @@ class DictationTrayApp(QObject):
         self.ptt_name = hk.get("push_to_talk_key", "ctrl_r")
         self.toggle_name = hk.get("toggle_key", "f9")
         self.abort_name = hk.get("abort_key", "esc")
+        self.copy_name = hk.get("copy_key", "f8")
+        self.mode_cycle_name = hk.get("mode_cycle_key", "f7")
         try:
             self._listener.stop()
             self._listener = None
@@ -328,13 +363,16 @@ class DictationTrayApp(QObject):
         self._ptt_key = _parse_key(self.ptt_name)
         self._toggle_key = _parse_key(self.toggle_name)
         self._abort_key = _parse_key(self.abort_name)
+        self._copy_key = _parse_key(self.copy_name)
+        self._mode_cycle_key = _parse_key(self.mode_cycle_name)
         self._ptt_down = False
         self._listener = keyboard.Listener(
             on_press=self._on_press, on_release=self._on_release)
         self._listener.daemon = True
         self._listener.start()
-        log.info("hotkeys: mode=%s ptt=%s toggle=%s abort=%s",
-                 self.mode, self.ptt_name, self.toggle_name, self.abort_name)
+        log.info("hotkeys: mode=%s ptt=%s toggle=%s abort=%s copy=%s mode_cycle=%s",
+                 self.mode, self.ptt_name, self.toggle_name, self.abort_name,
+                 self.copy_name, self.mode_cycle_name)
 
     @staticmethod
     def _key_matches(key, target) -> bool:
@@ -360,6 +398,13 @@ class DictationTrayApp(QObject):
                 return
             if self.mode == "toggle" and self._key_matches(key, self._toggle_key):
                 self._sig_toggle.emit()
+                return
+            if self._key_matches(key, self._copy_key):
+                self._sig_copy_last.emit()
+                return
+            if self._key_matches(key, self._mode_cycle_key):
+                self._sig_mode_cycle.emit()
+                return
         except Exception:
             log.exception("hotkey on_press error")
 
@@ -426,13 +471,25 @@ class DictationTrayApp(QObject):
     def _set_state(self, state: str):
         self.state = state
         self.tray.setIcon(_make_icon(STATE_COLOR[state]))
-        label = {LOADING: "Loading model…", IDLE: "Ready", RECORDING: "Listening…",
-                 TRANSCRIBING: "Transcribing…"}[state]
+        label = {LOADING: "Loading model...", IDLE: "Ready", RECORDING: "Listening...",
+                 TRANSCRIBING: "Transcribing..."}[state]
         dev = f" on {self.engine.active_device}" if self.engine.active_device else ""
+        # AMD GPU note
+        amd_note = ""
+        try:
+            from . import device as _device
+            if hasattr(_device, '_amd_gpu_present') and _device._amd_gpu_present():
+                if self.engine.active_device == "cpu":
+                    amd_note = " (AMD GPU — CPU mode)"
+        except Exception:
+            pass
         self.tray.setToolTip(f"Dictate — {label}\n{self._trigger_hint()}")
-        self.act_status.setText(f"{label}  ·  {self.engine.model_size}{dev}")
+        self.act_status.setText(f"{label}  ·  {self.engine.model_size}{dev}{amd_note}")
         if hasattr(self, "act_hint"):
             self.act_hint.setText(self._trigger_hint())
+        if hasattr(self, "act_mode"):
+            self.act_mode.setText(
+                f"Mode: {MODE_LABELS[self._dict_mode]}  ({_pretty_key(self.mode_cycle_name)} to cycle)")
 
     def _on_model_ready(self, device: str):
         self._set_state(IDLE)
@@ -444,12 +501,27 @@ class DictationTrayApp(QObject):
     def _begin_recording(self) -> bool:
         if self.state != IDLE:
             return False
-        self._rec_app = appcontext.foreground_exe()
-        self._rec_profile = appcontext.resolve_profile(self._rec_app,
-                                                       self.app_profiles)
+        # If not in "auto" mode, the manual mode overrides per-app detection.
+        # "code" forces verbatim (like a terminal profile).
+        # "prose" forces cleanup + sentence casing (the default behaviour).
+        # "email" forces professional tone.
+        if self._dict_mode == "auto":
+            self._rec_app = appcontext.foreground_exe()
+            self._rec_profile = appcontext.resolve_profile(self._rec_app,
+                                                           self.app_profiles)
+        elif self._dict_mode == "code":
+            self._rec_app = appcontext.foreground_exe()
+            self._rec_profile = {"verbatim": True, "_profile": "code"}
+        elif self._dict_mode == "email":
+            self._rec_app = appcontext.foreground_exe()
+            self._rec_profile = {"tone": "professional", "_profile": "email"}
+        else:  # prose
+            self._rec_app = appcontext.foreground_exe()
+            self._rec_profile = {"_profile": "prose"}
         if self._rec_profile:
-            log.info("app context: %s -> profile %s", self._rec_app,
-                     self._rec_profile.get("_profile"))
+            log.info("app context: %s -> profile %s (mode=%s)",
+                     self._rec_app, self._rec_profile.get("_profile"),
+                     self._dict_mode)
         try:
             self.recorder.start_recording()
         except RuntimeError as ex:
@@ -463,8 +535,7 @@ class DictationTrayApp(QObject):
         preview_on = (self.live_preview
                       and self.engine.active_device == "cuda")
         self.overlay.show_recording(preview=preview_on)
-        # show which per-app profile is active, so the context awareness is
-        # visible rather than a silent behind-the-scenes thing
+        # show which mode/profile is active so the context awareness is visible
         if self._rec_profile:
             name = self._rec_profile.get("_profile", "")
             bits = [name]
@@ -554,6 +625,14 @@ class DictationTrayApp(QObject):
             self._run_voice_command(cmd)
             return
 
+        # --- macro expansion (speak a phrase -> type a block) --------------
+        macros = self.cfg.get("macros", {})
+        if macros and text.lower().strip() in {k.lower() for k in macros}:
+            for k, v in macros.items():
+                if k.lower() == text.lower().strip():
+                    text = v
+                    break
+
         # --- normal dictation ---------------------------------------------
         self.history.add(text, app=self._rec_app)
         payload = text if text.endswith("\n") else text + " "
@@ -616,6 +695,17 @@ class DictationTrayApp(QObject):
         log.error("%s", msg)
         self.overlay.hide_overlay()
         self._set_state(IDLE if self.engine.active_device else LOADING)
+        # Friendly toast for common errors, tray balloon for the rest
+        friendly = None
+        low = msg.lower()
+        if "no usable microphone" in low or "microphone" in low:
+            friendly = "no microphone detected — check Settings"
+        elif "model" in low and "load" in low:
+            friendly = "model failed to load — check your internet and restart"
+        elif "cuda" in low or "gpu" in low or "device" in low:
+            friendly = "GPU failed — fell back to CPU"
+        if friendly:
+            self.overlay.flash_toast(friendly)
         self.tray.showMessage("Dictate error", msg, QSystemTrayIcon.Critical, 5000)
 
     # ---- worker threads --------------------------------------------------

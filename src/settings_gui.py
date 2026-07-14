@@ -131,6 +131,10 @@ class SettingsDialog(QDialog):
         self.btn_toggle = KeyCaptureButton(hk.get("toggle_key", "f9"))
         f.addRow("Hold-to-talk key:", self.btn_ptt)
         f.addRow("Tap-to-talk key:", self.btn_toggle)
+        self.btn_copy = KeyCaptureButton(hk.get("copy_key", "f8"))
+        f.addRow("Copy last dictation key:", self.btn_copy)
+        self.btn_mode = KeyCaptureButton(hk.get("mode_cycle_key", "f7"))
+        f.addRow("Cycle modes key:", self.btn_mode)
         root.addWidget(g_trig)
 
         # --- Microphone ----------------------------------------------------
@@ -170,11 +174,14 @@ class SettingsDialog(QDialog):
             tier = _device.detect()
             hint = (f"Auto on this PC = {tier.model_size} on {tier.device}"
                     f" ({tier.compute_type})")
+            if getattr(tier, "amd_gpu", False):
+                hint += "\nAMD GPU detected — using CPU. DirectML GPU acceleration is on the roadmap."
         except Exception:
             hint = ""
         if hint:
             lbl = QLabel(hint)
             lbl.setStyleSheet("color: gray")
+            lbl.setWordWrap(True)
             f.addRow("", lbl)
         self.cb_lang = QComboBox()
         for val, label in LANG_CHOICES:
@@ -263,6 +270,8 @@ class SettingsDialog(QDialog):
                 "push_to_talk_key": self.btn_ptt.key_name,
                 "toggle_key": self.btn_toggle.key_name,
                 "abort_key": self.cfg.get("hotkeys", {}).get("abort_key", "esc"),
+                "copy_key": self.btn_copy.key_name,
+                "mode_cycle_key": self.btn_mode.key_name,
             },
             "cleanup": {
                 "remove_fillers": self.chk_fillers.isChecked(),

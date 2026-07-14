@@ -2,7 +2,8 @@
 
 choose_tier() is pure (testable). detect() probes the real machine and
 delegates to choose_tier(). VRAM is read via nvidia-smi (no extra deps);
-CUDA availability via ctranslate2 when present.
+CUDA availability via ctranslate2 when present. AMD GPUs are detected via
+WMIC so we can show an honest message instead of silently falling back.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ class Tier:
     device: str
     compute_type: str
     model_size: str
+    amd_gpu: bool = False
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -66,9 +68,30 @@ def _vram_gb() -> float:
         return 0.0
 
 
+def _amd_gpu_present() -> bool:
+    """Check for AMD GPU via WMIC on Windows. Returns False on non-Windows."""
+    exe = shutil.which("wmic")
+    if not exe:
+        return False
+    try:
+        out = subprocess.run(
+            [exe, "path", "win32_VideoController", "get", "name"],
+            capture_output=True, text=True, timeout=5)
+        text = out.stdout.upper()
+        return "AMD" in text or "RADEON" in text
+    except Exception as ex:
+        log.debug("AMD GPU probe failed: %s", ex)
+        return False
+
+
 def detect() -> Tier:
     cuda = _cuda_available()
     vram = _vram_gb() if cuda else 0.0
     tier = choose_tier(cuda, vram)
-    log.info("auto device: cuda=%s vram=%.1fGB -> %s", cuda, vram, tier.as_dict())
+    amd = _amd_gpu_present() if not cuda else False
+    if amd:
+        log.info("AMD GPU detected — using CPU (DirectML support planned)")
+        tier.amd_gpu = True
+    log.info("auto device: cuda=%s vram=%.1fGB amd=%s -> %s",
+             cuda, vram, amd, tier.as_dict())
     return tier

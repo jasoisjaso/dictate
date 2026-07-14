@@ -25,6 +25,8 @@ push_to_talk_key = "ctrl_r"      # hold to talk. Right Ctrl avoids terminal/Powe
                                  # other good picks: "alt_r", "pause", "menu", "scroll_lock", "f9"
 toggle_key = "f9"                # used only when mode = "toggle"
 abort_key = "esc"                # cancel while recording (ignored otherwise)
+copy_key = "f8"                  # copy last dictation to clipboard (rescue when text lands wrong)
+mode_cycle_key = "f7"            # cycle dictation modes: auto -> prose -> code -> email -> auto
 
 [post_processing]
 casing = "sentence"              # sentence | upper | lower | off
@@ -47,6 +49,14 @@ ollama_endpoint = "http://127.0.0.1:11434"
 # spelling of these words. Examples:
 # "woolies" = "Woolworths"
 # "hello acrylic" = "Hello Acrylic"
+
+[macros]
+# Voice macros: speak a phrase, get a block of text typed. Multi-line is fine.
+# These are merged into the dictionary at runtime — the difference is just
+# that macros tend to be longer phrases that expand to full blocks.
+# "insert my email" = "your@email.com"
+# "sign off" = "Best regards,\nYour Name"
+# "my address" = "123 Brisbane St, QLD 4000"
 
 [audio]
 # input_device = 3               # uncomment to pin a specific microphone

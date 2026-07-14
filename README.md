@@ -37,13 +37,21 @@ person can actually use.
   - **"scratch that"** — delete the whole last dictation
   - **"delete last word"** / **"delete last three words"**
   - **"capitalize that"** / **"all caps that"** / **"lowercase that"**
+- **Switch modes on the fly** — press **F7** to cycle:
+  - **Auto** — detects the app (terminal = verbatim, chat = casual)
+  - **Prose** — full cleanup, sentence casing (default)
+  - **Code** — verbatim, no casing, no cleanup
+  - **Email** — professional tone
+- **Copy last dictation** — press **F8** to copy the last result to the
+  clipboard. The rescue hatch when text lands in the wrong window.
 - After each dictation a small pill briefly shows the **word count + "Ctrl+Z
   to undo"**, so you always know it landed and can take it back.
 - Tray icon colours: green = ready, red = recording, blue = transcribing.
+- The tray menu shows **words dictated + WPM this session**.
 - New here? Right-click the tray icon → **How to use…** for a quick visual
   walkthrough (also shown once on first run).
-- Landed in the wrong window? Tray → **Copy last dictation**, or open
-  **History…** for the last 25.
+- Landed in the wrong window? Press **F8** to copy the last dictation, or
+  open **History…** for the last 25.
 
 ## What makes it different
 
@@ -56,6 +64,13 @@ person can actually use.
 - **Live transcript preview** in the pill while you speak (GPU builds) —
   the most-requested dictation feature on Reddit, missing from nearly every
   free tool.
+- **Voice macros.** Set up phrases in the config file that expand to full
+  blocks of text: say "insert my email" and it types your address; "sign off"
+  and it types your signature. Build on the dictionary engine you already have.
+- **Dictation modes.** Press F7 to cycle between Auto (per-app detection),
+  Prose (full cleanup), Code (verbatim), and Email (professional) — the
+  "Super Mode" context awareness the paid tools charge for, running
+  100% locally.
 - **Smart injection.** Short phrases are typed like real keystrokes; long
   or multi-line text is pasted instantly via a clipboard swap (your
   clipboard is restored afterwards). A typed Enter can't accidentally
@@ -90,7 +105,8 @@ Auto mode measures your hardware and picks the strongest model that fits:
 | NVIDIA GPU, 4.5–6 GB       | large-v3-turbo, int8           | Nearly as good          |
 | NVIDIA GPU, 3–4.5 GB       | small, int8                    | Fast, good accuracy     |
 | NVIDIA GPU, under 3 GB     | base, int8                     | Fast, decent accuracy   |
-| No NVIDIA GPU (CPU only)   | small, int8                    | A beat slower, still good|
+| AMD GPU                    | small, int8 (CPU)              | Works; DirectML support planned |
+| No GPU (CPU only)          | small, int8                    | A beat slower, still good|
 
 You can override any of this in Settings. If a GPU load fails for any
 reason, Dictate quietly falls back to CPU instead of crashing.
@@ -125,6 +141,18 @@ Pure-logic tests run anywhere: `python -m pytest tests -q --ignore=tests/smoke_w
 `run.sh` starts a drag-and-drop file transcriber at `http://localhost:8737`
 — drop any audio/video file, get TXT/SRT/VTT/JSON out. Same engine, GPU
 accelerated, handles long recordings.
+
+## Roadmap
+
+- **AMD GPU acceleration via DirectML** — run Whisper on AMD graphics cards
+  using onnxruntime-directml (no NVIDIA or ROCm required). Currently AMD
+  GPUs are detected and the app runs on CPU.
+- **Mic test in Settings** — record 3 seconds and see the transcription
+  inline, so you can validate your setup before diving in.
+- **Voice macros UI** — a Settings panel for managing voice macros (currently
+  config-file only).
+- **"Redo as verbatim"** — re-inject the raw transcript without cleanup if
+  the post-processing mangled something.
 
 ## License
 
