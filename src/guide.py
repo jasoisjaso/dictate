@@ -255,6 +255,7 @@ class GuideDialog(QDialog):
              "body": "You don't need the keyboard to correct things:<br><br>"
                      "&nbsp;&nbsp;• <b>\"scratch that\"</b> — delete the whole last bit<br>"
                      "&nbsp;&nbsp;• <b>\"delete last word\"</b> (or \"…last three words\")<br>"
+                     "&nbsp;&nbsp;• <b>\"delete last sentence\"</b> — delete from the last period to here<br>"
                      "&nbsp;&nbsp;• <b>\"capitalize that\"</b> / <b>\"all caps that\"</b> / "
                      "<b>\"lowercase that\"</b><br>"
                      "&nbsp;&nbsp;• <b>\"redo verbatim\"</b> — re-inject raw words without cleanup<br><br>"

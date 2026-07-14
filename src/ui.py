@@ -128,8 +128,10 @@ class DictationTrayApp(QObject):
         self.engine = WhisperTranscriber(cfg)
         self.recorder = AudioRecorder(
             input_device=cfg.get("audio", {}).get("input_device"))
-        self.overlay = WaveformOverlay()
+        self.overlay = WaveformOverlay(style=cfg.get("overlay", {}).get("style", "equalizer"))
         self.overlay.set_level_source(self.recorder.current_level)
+        # For the blob visualizer: provide a callback that returns recent audio
+        self.overlay.set_audio_source(lambda: self.recorder.peek_tail(0.05))
         self.last_injected_len = 0
         self.last_injected_text = ""
         self.last_raw_text = ""      # raw transcript (pre-cleanup) for "redo verbatim"
@@ -360,6 +362,9 @@ class DictationTrayApp(QObject):
         lang = self.cfg.get("whisper", {}).get("language", "en")
         self.engine.language = None if lang in ("", "auto") else lang
         self._set_state(self.state)
+        # Apply overlay style change immediately
+        vis_style = self.cfg.get("overlay", {}).get("style", "equalizer")
+        self.overlay.set_style(vis_style)
         want_model = self.cfg.get("whisper", {}).get("model_size", "auto")
         if want_model not in ("auto", self.engine.model_size):
             self.tray.showMessage(
@@ -651,8 +656,15 @@ class DictationTrayApp(QObject):
         n_words = len(re.findall(r"[\w']+", text))
         self._session_words += n_words
         self._update_stats_label()
+        # Context-aware undo hint: Ctrl+Z in a terminal sends EOF/SIGTSTP
+        # (suspends the process), so show a different hint there.
+        is_terminal = bool(self._rec_profile and self._rec_profile.get("verbatim"))
+        if is_terminal:
+            undo_hint = "say 'scratch that' to undo"
+        else:
+            undo_hint = "Ctrl+Z to undo"
         self.overlay.flash_toast(
-            f"{n_words} word{'s' if n_words != 1 else ''} · Ctrl+Z to undo")
+            f"{n_words} word{'s' if n_words != 1 else ''} · {undo_hint}")
 
     def _run_voice_command(self, cmd):
         """Execute a parsed voice-edit command against the last injection."""
@@ -712,6 +724,33 @@ class DictationTrayApp(QObject):
             self.last_injected_text = payload
             self.last_injected_len = len(payload)
             self.overlay.flash_toast("redone verbatim")
+            return
+        if cmd.kind == "delete_sentence":
+            # Delete from the last sentence boundary (. ! ? \n) to the end
+            text = self.last_injected_text
+            if not text.strip():
+                self.overlay.flash_toast("nothing to delete")
+                return
+            # Find the last sentence boundary before the final character
+            rstrip = text.rstrip()
+            search = rstrip[:-1] if len(rstrip) > 1 else rstrip
+            boundary = -1
+            for ch in ".!?\n":
+                pos = search.rfind(ch)
+                if pos > boundary:
+                    boundary = pos
+            if boundary >= 0:
+                # Delete everything after the boundary
+                to_delete = len(text) - (boundary + 1)
+                to_delete = min(to_delete, self.last_injected_len)
+            else:
+                # No sentence boundary — delete the whole thing
+                to_delete = self.last_injected_len
+            if to_delete > 0:
+                win32_input.inject_backspaces(to_delete)
+                self.last_injected_text = text[:len(text) - to_delete]
+                self.last_injected_len = len(self.last_injected_text)
+            self.overlay.flash_toast("deleted last sentence")
             return
 
     def _on_error(self, msg: str):

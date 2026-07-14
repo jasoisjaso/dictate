@@ -76,6 +76,12 @@ sounds = true                    # short beep on record start/stop
 live_preview = true              # show what it's hearing in the pill while
                                  # you talk (GPU builds only; CPU skips it)
 
+[overlay]
+style = "equalizer"              # equalizer | blob
+                                 # equalizer: clean grey bars (minimal, professional)
+                                 # blob: morphing colour-shifting orb that reacts to
+                                 # pitch and volume (impossible to miss)
+
 # ---- context-aware per-app formatting --------------------------------------
 # Dictate looks at which app has focus when you start talking and adapts.
 # Built-in defaults cover terminals/IDEs (verbatim: no sentence-casing, no

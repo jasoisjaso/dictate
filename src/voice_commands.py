@@ -88,6 +88,10 @@ def parse(text: str) -> Command | None:
              "redo raw", "try again raw"):
         return Command("redo_verbatim")
 
+    if t in ("delete last sentence", "delete sentence", "remove last sentence",
+             "delete last line", "remove last line"):
+        return Command("delete_sentence")
+
     return None
 
 

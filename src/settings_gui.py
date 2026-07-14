@@ -192,6 +192,18 @@ class SettingsDialog(QDialog):
         f.addRow("Language:", self.cb_lang)
         root.addWidget(g_model)
 
+        # --- Visualizer -------------------------------------------------------
+        g_vis = QGroupBox("Visualizer")
+        f = QFormLayout(g_vis)
+        self.cb_vis = QComboBox()
+        self.cb_vis.addItem("Equalizer — clean grey bars", "equalizer")
+        self.cb_vis.addItem("Blob — colour-shifting orb (reacts to pitch & volume)", "blob")
+        cur_vis = cfg.get("overlay", {}).get("style", "equalizer")
+        pos = self.cb_vis.findData(cur_vis)
+        self.cb_vis.setCurrentIndex(pos if pos >= 0 else 0)
+        f.addRow("Style:", self.cb_vis)
+        root.addWidget(g_vis)
+
         # --- Cleanup + dictionary -------------------------------------------
         g_clean = QGroupBox("Make me sound good")
         v = QVBoxLayout(g_clean)
@@ -328,6 +340,9 @@ class SettingsDialog(QDialog):
             "whisper": {
                 "model_size": self.cb_model.currentData(),
                 "language": self.cb_lang.currentData(),
+            },
+            "overlay": {
+                "style": self.cb_vis.currentData(),
             },
             "hotkeys": {
                 "mode": ("push_to_talk" if self.rb_ptt.isChecked() else "toggle"),

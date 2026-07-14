@@ -80,3 +80,18 @@ def test_redo_verbatim_variants():
 def test_redo_verbatim_not_triggered_by_prose():
     assert vc.parse("redo that last step") is None
     assert vc.parse("I want to redo the whole thing") is None
+
+
+# ---- delete_sentence command --------------------------------------------
+
+def test_delete_sentence_variants():
+    for s in ["delete last sentence", "delete sentence",
+              "remove last sentence", "delete last line", "remove last line"]:
+        cmd = vc.parse(s)
+        assert cmd is not None
+        assert cmd.kind == "delete_sentence"
+
+
+def test_delete_sentence_not_triggered_by_prose():
+    assert vc.parse("delete that sentence from the document") is None
+    assert vc.parse("the last sentence was important") is None

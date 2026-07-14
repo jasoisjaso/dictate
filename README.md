@@ -36,6 +36,7 @@ person can actually use.
 - **Fix it by voice** — no keyboard needed:
   - **"scratch that"** — delete the whole last dictation
   - **"delete last word"** / **"delete last three words"**
+  - **"delete last sentence"** — delete from the last period to here
   - **"capitalize that"** / **"all caps that"** / **"lowercase that"**
   - **"redo verbatim"** — re-inject the raw words without cleanup (if the
     post-processing mangled something)
@@ -46,10 +47,14 @@ person can actually use.
   - **Email** — professional tone
 - **Copy last dictation** — press **F8** to copy the last result to the
   clipboard. The rescue hatch when text lands in the wrong window.
-- After each dictation a small pill briefly shows the **word count + "Ctrl+Z
-  to undo"**, so you always know it landed and can take it back.
+- After each dictation a brief toast shows the **word count + undo hint**,
+  so you always know it landed and can take it back.
 - Tray icon colours: green = ready, red = recording, blue = transcribing.
 - The tray menu shows **words dictated + WPM this session**.
+- **Visualizer styles** — pick in Settings:
+  - **Equalizer** — clean grey bars (minimal, professional)
+  - **Blob** — a morphing colour-shifting orb that deforms with your pitch
+    and changes colour (green → yellow → red) as you get louder
 - New here? Right-click the tray icon → **How to use…** for a quick visual
   walkthrough (also shown once on first run).
 - Landed in the wrong window? Press **F8** to copy the last dictation, or
