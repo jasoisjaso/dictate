@@ -129,3 +129,42 @@ def test_select_all_command():
 def test_format_not_triggered_by_prose():
     assert vc.parse("make that bold please") is None
     assert vc.parse("the bold text is important") is None
+
+
+# ---- replace command -----------------------------------------------------
+
+def test_replace_command():
+    cmd = vc.parse("replace hello with hi")
+    assert cmd is not None
+    assert cmd.kind == "replace"
+    assert cmd.old == "hello"
+    assert cmd.new == "hi"
+
+def test_replace_multiword():
+    cmd = vc.parse("replace new york with los angeles")
+    assert cmd is not None
+    assert cmd.kind == "replace"
+    assert cmd.old == "new york"
+    assert cmd.new == "los angeles"
+
+def test_replace_not_triggered_by_prose():
+    assert vc.parse("please replace the battery") is None
+
+
+# ---- Bosnian voice commands ----------------------------------------------
+
+def test_bosnian_scratch():
+    for s in ["obriši to", "obrisi to", "poništi"]:
+        cmd = vc.parse(s)
+        assert cmd is not None
+        assert cmd.kind == "scratch"
+
+def test_bosnian_delete_word():
+    cmd = vc.parse("obriši reč")
+    assert cmd is not None
+    assert cmd.kind == "delete_words"
+
+def test_bosnian_delete_sentence():
+    cmd = vc.parse("obriši rečenicu")
+    assert cmd is not None
+    assert cmd.kind == "delete_sentence"

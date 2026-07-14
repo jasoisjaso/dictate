@@ -178,6 +178,7 @@ class DictationTrayApp(QObject):
         self.copy_name = hk.get("copy_key", "f8")
         self.mode_cycle_name = hk.get("mode_cycle_key", "f7")
         self.pause_name = hk.get("pause_key", "pause")
+        self.rerecord_name = hk.get("rerecord_key", "f6")
 
         self.tray = QSystemTrayIcon(_make_icon(STATE_COLOR[LOADING]))
         self._build_menu()
@@ -284,6 +285,16 @@ class DictationTrayApp(QObject):
         else:
             self.recorder.pause()
             self.overlay.flash_toast("paused")
+
+    def _rerecord(self):
+        """Delete the last dictation and immediately start recording again."""
+        if self.state != IDLE:
+            return
+        if self.last_injected_len > 0:
+            win32_input.inject_backspaces(self.last_injected_len)
+            self.last_injected_len = 0
+            self.last_injected_text = ""
+        self._begin_recording()
 
     def _copy_last(self):
         """Copy the most recent dictation to the clipboard — the fast rescue
@@ -399,6 +410,7 @@ class DictationTrayApp(QObject):
         self._copy_key = _parse_key(self.copy_name)
         self._mode_cycle_key = _parse_key(self.mode_cycle_name)
         self._pause_key = _parse_key(self.pause_name)
+        self._rerecord_key = _parse_key(self.rerecord_name)
         self._ptt_down = False
         self._listener = keyboard.Listener(
             on_press=self._on_press, on_release=self._on_release)
@@ -441,6 +453,9 @@ class DictationTrayApp(QObject):
                 return
             if self._key_matches(key, self._pause_key):
                 self._toggle_pause()
+                return
+            if self._key_matches(key, self._rerecord_key):
+                self._rerecord()
                 return
         except Exception:
             log.exception("hotkey on_press error")
@@ -581,7 +596,7 @@ class DictationTrayApp(QObject):
         if preview_on:
             self._preview_stop.clear()
             threading.Thread(target=self._preview_worker, daemon=True).start()
-        self._beep(880, 70)
+        self._beep(880, 60)  # high beep = recording start
         return True
 
     def _stop_and_transcribe(self):
@@ -592,7 +607,7 @@ class DictationTrayApp(QObject):
         audio = self.recorder.stop_recording()
         self._set_state(TRANSCRIBING)
         self.overlay.show_processing()
-        self._beep(660, 70)
+        self._beep(660, 60)  # lower beep = recording stop / transcribing
         # token identifies this transcription; the watchdog uses it so a stuck
         # long take can never permanently soft-lock the app at TRANSCRIBING
         self._transcribe_token = getattr(self, "_transcribe_token", 0) + 1
@@ -818,11 +833,37 @@ class DictationTrayApp(QObject):
             self.last_injected_len = len(new)
             self.overlay.flash_toast(cmd.mode)
             return
+        if cmd.kind == "replace":
+            old = self.last_injected_text
+            if not old.strip():
+                self.overlay.flash_toast("nothing to replace")
+                return
+            old_text = old.rstrip()
+            trailing = old[len(old_text):]
+            new_text = old_text.replace(cmd.old, cmd.new)
+            if new_text == old_text:
+                self.overlay.flash_toast(f"didn't find '{cmd.old}'")
+                return
+            new_payload = new_text + trailing
+            win32_input.inject_backspaces(len(old))
+            how = win32_input.choose_injection(new_payload, mode=self.inject_mode,
+                                               paste_threshold=self.paste_threshold)
+            if how == "paste":
+                win32_input.inject_text_via_paste(new_payload)
+            else:
+                win32_input.inject_text_native_unicode(new_payload)
+            self.last_injected_text = new_payload
+            self.last_injected_len = len(new_payload)
+            self.overlay.flash_toast(f"replaced '{cmd.old}' with '{cmd.new}'")
+            return
 
     def _on_error(self, msg: str):
         log.error("%s", msg)
         self.overlay.hide_overlay()
         self._set_state(IDLE if self.engine.active_device else LOADING)
+        # Error beep: descending two-tone
+        self._beep(440, 80)
+        self._beep(330, 80)
         # Friendly toast for common errors, tray balloon for the rest
         friendly = None
         low = msg.lower()

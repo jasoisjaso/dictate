@@ -33,19 +33,23 @@ _NUMWORDS = {
 @dataclass
 class Command:
     """A recognised voice-edit command.
-
-    kind: one of scratch | delete_words | recase
+    kind: scratch | delete_words | recase | redo_verbatim | delete_sentence | format | replace
     n:    word count for delete_words
-    mode: 'upper' | 'lower' | 'title' for recase
+    mode: 'upper' | 'lower' | 'title' for recase; 'bold'|'italic'|'select_all' for format
+    old:  text to find (for replace)
+    new:  replacement text (for replace)
     """
     kind: str
     n: int = 0
     mode: str = ""
+    old: str = ""
+    new: str = ""
 
 
 def _norm(text: str) -> str:
-    """Lowercase, strip punctuation/whitespace so 'Scratch that.' matches."""
-    return re.sub(r"[^a-z0-9 ]", "", text.lower()).strip()
+    """Lowercase, strip punctuation/whitespace so 'Scratch that.' matches.
+    Preserves Unicode letters (š, č, ć, đ, ž) for non-English commands."""
+    return re.sub(r"[^\w\s]", "", text.lower()).strip()
 
 
 def parse(text: str) -> Command | None:
@@ -101,6 +105,19 @@ def parse(text: str) -> Command | None:
         return Command("format", mode="italic")
     if t in ("select all", "select everything"):
         return Command("format", mode="select_all")
+
+    # "replace X with Y" — find-and-replace in the last dictation
+    m = re.fullmatch(r"replace (.+?) with (.+)", t)
+    if m:
+        return Command("replace", old=m.group(1), new=m.group(2))
+
+    # Bosnian voice commands
+    if t in ("obriši to", "obrisi to", "poništi"):
+        return Command("scratch")
+    if t in ("obriši reč", "obriši poslednju reč", "obrisi rec", "obrisi poslednju rec"):
+        return Command("delete_words", n=1)
+    if t in ("obriši rečenicu", "obrisi recenicu", "obriši poslednju rečenicu"):
+        return Command("delete_sentence")
 
     return None
 

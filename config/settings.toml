@@ -28,6 +28,7 @@ abort_key = "esc"                # cancel while recording (ignored otherwise)
 copy_key = "f8"                  # copy last dictation to clipboard (rescue when text lands wrong)
 mode_cycle_key = "f7"            # cycle dictation modes: auto -> prose -> code -> email -> auto
 pause_key = "pause"              # pause/resume recording without stopping (Pause key)
+rerecord_key = "f6"              # delete last dictation and immediately re-record
 
 # ---- regex transforms (find-replace on transcripts) -----------------------
 # [[transforms]]

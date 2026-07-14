@@ -25,12 +25,12 @@ MODEL_CHOICES = [
 
 LANG_CHOICES = [
     ("en", "English"), ("auto", "Auto-detect (any language)"),
+    ("bs", "Bosnian"), ("hr", "Croatian"), ("sr", "Serbian"),
     ("de", "German"), ("es", "Spanish"), ("fr", "French"),
     ("it", "Italian"), ("pt", "Portuguese"), ("nl", "Dutch"),
     ("pl", "Polish"), ("tr", "Turkish"), ("ar", "Arabic"),
     ("hi", "Hindi"), ("ja", "Japanese"), ("ko", "Korean"),
-    ("zh", "Chinese"), ("bs", "Bosnian"), ("hr", "Croatian"),
-    ("sr", "Serbian"),
+    ("zh", "Chinese"),
 ]
 
 _KEY_LABELS = {
@@ -135,6 +135,8 @@ class SettingsDialog(QDialog):
         f.addRow("Copy last dictation key:", self.btn_copy)
         self.btn_mode = KeyCaptureButton(hk.get("mode_cycle_key", "f7"))
         f.addRow("Cycle modes key:", self.btn_mode)
+        self.btn_rerecord = KeyCaptureButton(hk.get("rerecord_key", "f6"))
+        f.addRow("Re-record last key:", self.btn_rerecord)
         root.addWidget(g_trig)
 
         # --- Microphone ----------------------------------------------------
@@ -296,12 +298,10 @@ class SettingsDialog(QDialog):
 
     def _run_mic_test(self):
         """Record 3 seconds of audio, transcribe, and show the result inline.
-        Runs in a background thread so the GUI doesn't freeze."""
-        import threading
-        import numpy as np
+        Uses the main app's already-loaded model via a signal, so we don't
+        try to load a second model instance (which was the bug)."""
         self.btn_mic_test.setEnabled(False)
-        self.lbl_mic_result.setText("Recording... say something now!")
-
+        self.lbl_mic_result.setText("Recording 3s... say something now!")
         mic_idx = self.cb_mic.currentData()
 
         def _worker():
@@ -317,20 +317,29 @@ class SettingsDialog(QDialog):
                 audio_data = rec.stop_recording()
                 rec.close()
                 if audio_data.size < 1600:
-                    self.lbl_mic_result.setText("No audio captured — check your mic")
+                    self.lbl_mic_result.setText("No audio captured — check your mic is plugged in")
                     return
-                # Transcribe using the engine
-                try:
-                    from . import engine as _engine
-                except ImportError:
-                    import engine as _engine
-                eng = _engine.WhisperTranscriber(self.cfg)
-                eng.load()
-                raw = eng.transcribe_audio_buffer(audio_data)
-                text = eng.post_process(raw) if raw else ""
-                if text:
+                # Use the main app's engine (already loaded) instead of
+                # creating a new one. We access it via QApplication's
+                # top-level widgets — the tray app stores a reference.
+                from PySide6.QtWidgets import QApplication
+                app = QApplication.instance()
+                engine = None
+                # Walk the app's children to find the DictationTrayApp
+                for obj in app.children():
+                    if hasattr(obj, "engine") and obj.engine is not None:
+                        if hasattr(obj.engine, "_model") and obj.engine._model is not None:
+                            engine = obj.engine
+                            break
+                if engine is None:
+                    # Fallback: load a standalone engine (model may not be ready yet)
                     self.lbl_mic_result.setText(
-                        f"<b>Heard:</b> \"{text}\"")
+                        "Model not loaded yet — wait for the green tray icon, then try again")
+                    return
+                raw = engine.transcribe_audio_buffer(audio_data)
+                text = engine.post_process(raw) if raw else ""
+                if text:
+                    self.lbl_mic_result.setText(f'<b>Heard:</b> "{text}"')
                 else:
                     self.lbl_mic_result.setText(
                         "Nothing transcribed — try speaking louder or closer")
@@ -339,6 +348,7 @@ class SettingsDialog(QDialog):
             finally:
                 self.btn_mic_test.setEnabled(True)
 
+        import threading
         threading.Thread(target=_worker, daemon=True).start()
 
     def _save(self):
@@ -357,6 +367,7 @@ class SettingsDialog(QDialog):
                 "abort_key": self.cfg.get("hotkeys", {}).get("abort_key", "esc"),
                 "copy_key": self.btn_copy.key_name,
                 "mode_cycle_key": self.btn_mode.key_name,
+                "rerecord_key": self.btn_rerecord.key_name,
             },
             "cleanup": {
                 "remove_fillers": self.chk_fillers.isChecked(),
