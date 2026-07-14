@@ -11,31 +11,34 @@ log = logging.getLogger("dictate.engine")
 # Spoken phrase -> replacement. Order matters: longest phrases first so
 # "new paragraph" wins over "new line"-style partial hits.
 PUNCTUATION_LEXICON = [
+    # Multi-word phrases MUST come before single-word (longest first)
     ("new paragraph", "\n\n"),
-    ("open parenthesis", "("),
-    ("close parenthesis", ")"),
+    ("bullet point", "\n\u2022 "),
     ("exclamation mark", "!"),
     ("exclamation point", "!"),
     ("question mark", "?"),
-    ("bullet point", "\n\u2022 "),
+    ("open parenthesis", "("),
+    ("close parenthesis", ")"),
     ("full stop", "."),
     ("new line", "\n"),
-    ("semicolon", ";"),
-    ("period", "."),
-    ("comma", ","),
-    ("colon", ":"),
-    # Bosnian/Croatian/Serbian spoken punctuation (Bosnian ijekavian)
-    ("tačka", "."),
-    ("zarez", ","),
-    ("upitnik", "?"),
-    ("uzvičnik", "!"),
+    # Bosnian multi-word (must come before single-word tačka, zarez, etc.)
     ("tačka-zarez", ";"),
-    ("dvotačka", ":"),
-    ("trotačka", "…"),
     ("novi red", "\n"),
     ("novi pasus", "\n\n"),
     ("otvorena zagrada", "("),
     ("zatvorena zagrada", ")"),
+    ("trotačka", "…"),
+    # Single-word entries
+    ("semicolon", ";"),
+    ("period", "."),
+    ("comma", ","),
+    ("colon", ":"),
+    # Bosnian single-word
+    ("tačka", "."),
+    ("zarez", ","),
+    ("upitnik", "?"),
+    ("uzvičnik", "!"),
+    ("dvotačka", ":"),
     ("navodnici", '"'),
     ("crta", "—"),
 ]
@@ -104,6 +107,8 @@ class WhisperTranscriber:
         self._model = None
         self._lock = threading.Lock()
         self.active_device = None
+        self._has_punctuation_payload = False
+        self._last_punct_payload = ""
 
     def load(self):
         """Load the model and warm it up with a dummy transcription."""
@@ -222,12 +227,30 @@ class WhisperTranscriber:
             return ""
         profile = profile or {}
         verbatim = bool(profile.get("verbatim"))
+        # Track if the punctuation lexicon converted the whole input to
+        # punctuation/newlines (e.g. user said just "tačka" or "novi red").
+        # _fix_spacing would otherwise strip standalone \n to empty.
+        # Also track if ANY punctuation command fired (for strip_short).
+        original_text = text
+        self._has_punctuation_payload = False
+        self._last_punct_payload = ""
+        self._punct_command_fired = False
         for phrase, repl in PUNCTUATION_LEXICON:
             # eat punctuation whisper may have attached to the spoken keyword
+            before = text
             text = re.sub(
                 rf"[\s,.]*\b{re.escape(phrase)}\b[.,]?",
                 repl.replace("\\", "\\\\"),
                 text, flags=re.IGNORECASE)
+            if text != before:
+                self._punct_command_fired = True
+        # If the punctuation lexicon consumed everything (input was just a
+        # punctuation command), preserve the payload so _fix_spacing doesn't
+        # eat it. Use raw text (not stripped) because \n is whitespace.
+        after_punct_words = re.findall(r"[\w']+", text)
+        if not after_punct_words and text:
+            self._has_punctuation_payload = True
+            self._last_punct_payload = text
         if verbatim:
             # terminals and editors get the words untouched: no filler
             # stripping, no sentence casing, no trailing-period logic
@@ -259,9 +282,18 @@ class WhisperTranscriber:
             except ImportError:
                 import auto_punct
             text = auto_punct.add_punctuation(text)
+        # strip_short: remove trailing period from short utterances (< 3 words)
+        # BUT only if there are actual words AND the period wasn't explicitly
+        # spoken via a punctuation command (don't strip "tačka" -> ".")
         words = re.findall(r"[\w']+", text)
-        if self.strip_short and len(words) < 3:
-            text = text.rstrip(".")
+        if self.strip_short and len(words) < 3 and words:
+            # Don't strip the period if the user explicitly said "period"/"tačka"
+            if not self._punct_command_fired:
+                text = text.rstrip(".")
+        # Don't return empty if we had punctuation/newlines — _fix_spacing
+        # can strip standalone newlines to empty, so preserve them
+        if not text and self._has_punctuation_payload:
+            text = self._last_punct_payload
         return text.strip(" ")
 
     @staticmethod
