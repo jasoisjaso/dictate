@@ -1,76 +1,75 @@
-"""Modern recording overlay — acrylic glass pill with premium animations.
+"""Recording overlay — a glowing pill with a dramatic, premium equalizer.
 
-Design draws from competitive analysis:
-- Wispr Flow: wide lozenge at bottom, frosted-glass with real acrylic blur,
-  glow ring animation when recording, waveform as primary visual, live transcript.
-- Superwhisper: per-app context tags, state colours, compact when idle.
-- 2025-2026 pattern: glassmorphism (translucency + layered glow), pulsing
-  borders, smooth animated waveforms, confident sizing, entrance/exit animations.
+The old version had thin 2px bars and a flat translucent background that
+looked like every other basic waveform widget. This version is completely
+different:
 
-API unchanged — ui.py calls the same methods (show_recording, show_processing,
-hide_overlay, flash_toast, set_profile_tag, set_preview, set_level_source).
+- No acrylic / no DWMAPI — the translucent window with rounded painting IS
+  the pill shape. Acrylic was filling the window rectangle and squaring the
+  corners. Gone.
+- Fat 6px bars with 4px gaps and per-bar glow halos — looks like a real
+  studio equalizer, not a toy oscilloscope.
+- Bars grow from the BOTTOM (not centred) — the Wispr Flow look.
+- Rounded gradient body with a 2px coloured rim that matches the state.
+- Big pulsing recording dot on the left with a soft glow.
+- Bouncing-dot processing animation (three dots, not a shimmer).
+- Smooth fade+slide entrance, fade exit.
+- Per-bar smoothed decay for a liquid feel.
+- DPI-aware sizing.
+
+API unchanged — ui.py calls the same methods.
 """
 
-import ctypes
 import math
 import platform
 import time as _time
 from collections import deque
 
 from PySide6.QtCore import Qt, QTimer, QRectF, QPointF
-from PySide6.QtGui import (QColor, QPainter, QLinearGradient, QFont,
-                           QFontMetrics, QRadialGradient)
+from PySide6.QtGui import (QColor, QPainter, QLinearGradient, QRadialGradient,
+                           QFont, QFontMetrics, QPen, QBrush)
 from PySide6.QtWidgets import QWidget
 
-# ── layout constants (chunkier, more confident) ─────────────────────────
-N_BARS = 28
-BAR_W = 4
-BAR_GAP = 3
-BAR_MAX = 40
-IDLE_H = 3.0
-PAD_X = 28
-PAD_Y = 20
-LEVEL_GAIN = 6.5
-PREVIEW_W = 620
-PREVIEW_ROW_H = 24
-TOAST_STD_W = 220
-RADIUS = 26
+# ── layout ──────────────────────────────────────────────────────────────
+N_BARS = 24
+BAR_W = 6
+BAR_GAP = 4
+BAR_MAX = 44
+BAR_MIN = 4
+PAD_X = 30
+PAD_Y = 22
+LEVEL_GAIN = 7.0
+PREVIEW_W = 640
+PREVIEW_ROW_H = 26
+TOAST_STD_W = 240
+RADIUS = 28
 
-# recording dot
-DOT_R = 5
-DOT_SPACE = 26  # space reserved for recording dot on the left
+DOT_R = 6
+DOT_SPACE = 32
 
 # ── timing ──────────────────────────────────────────────────────────────
-TICK_MS = 33                 # ~30 fps
+TICK_MS = 33
 TOAST_DEFAULT_MS = 1800
-ANIM_IN_MS = 200
-ANIM_OUT_MS = 150
+ANIM_IN_MS = 220
+ANIM_OUT_MS = 140
 
-# ── styling ─────────────────────────────────────────────────────────────
-GLASS_BG = QColor(12, 14, 18, 200)
-GLASS_EDGE = QColor(255, 255, 255, 22)
-GLASS_INNER = QColor(255, 255, 255, 7)
+# ── colours ─────────────────────────────────────────────────────────────
+BODY_BG = QColor(14, 16, 22, 215)
+RIM_REC = QColor(224, 82, 82, 180)
+RIM_PRO = QColor(77, 163, 255, 160)
+INNER_HL = QColor(255, 255, 255, 10)
 
-GLOW_OUTER_REC = QColor(224, 82, 82, 60)
-GLOW_OUTER_PRO = QColor(77, 163, 255, 55)
+GLOW_REC = QColor(224, 82, 82)
+GLOW_PRO = QColor(77, 163, 255)
 
-# waveform gradient — electric cyan -> blue -> deep indigo
-WAVE_TOP = QColor("#64d2ff")
-WAVE_MID = QColor("#3d7dff")
-WAVE_BOT = QColor("#6366f1")
+WAVE_GRAD = [QColor("#5eead4"), QColor("#38bdf8"), QColor("#818cf8")]
 
-# processing shimmer (blue tones)
-PRO_TOP = QColor("#93c5fd")
-PRO_MID = QColor("#4da3ff")
-PRO_BOT = QColor("#6366f1")
+PRO_DOT = QColor("#4da3ff")
 
-# text
-TEXT_ACTIVE = QColor(226, 232, 240, 245)
-TEXT_MUTED = QColor(226, 232, 240, 120)
-TAG_BG = QColor(61, 125, 255, 60)
-TAG_TEXT = QColor(198, 219, 255, 240)
-
-REC_DOT_COLOR = QColor(224, 82, 82)
+TEXT_ACTIVE = QColor(226, 232, 240, 240)
+TEXT_MUTED = QColor(148, 163, 184, 140)
+TAG_BG = QColor(56, 189, 248, 50)
+TAG_TEXT = QColor(186, 230, 253, 235)
 
 
 class WaveformOverlay(QWidget):
@@ -87,7 +86,7 @@ class WaveformOverlay(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
 
         self._levels = deque([0.0] * N_BARS, maxlen=N_BARS)
-        self._display = [0.0] * N_BARS          # smoothed per-bar display values
+        self._display = [0.0] * N_BARS
         self._mode = "hidden"
         self._phase = 0.0
         self._level_source = None
@@ -105,47 +104,22 @@ class WaveformOverlay(QWidget):
         self._total_h = self._base_h + PREVIEW_ROW_H
         self._glow_phase = 0.0
         self._dot_phase = 0.0
-        self._dpi_scale = 1.0  # updated in showEvent
+        self._dpi_scale = 1.0
 
         # animation state
         self._opacity = 0.0
-        self._anim_dir = 0  # 0=stable, 1=fading in, -1=fading out
-
-        # acrylic blur
-        self._acrylic_tried = False
-        self._acrylic_enabled = False
+        self._anim_dir = 0
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
 
-    # ── acrylic blur ────────────────────────────────────────────────────
-
-    def _enable_acrylic(self):
-        """Enable Windows 11 acrylic blur behind the window for real frosted glass."""
-        if platform.system() != "Windows":
-            return
-        try:
-            hwnd = int(self.winId())
-            # DWMWA_SYSTEMBACKDROP_TYPE = 38 (Windows 11+)
-            # DWMSBT_TRANSIENTWINDOW = 3 (Acrylic)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 38,
-                ctypes.byref(ctypes.c_int(3)),
-                ctypes.sizeof(ctypes.c_int))
-            self._acrylic_enabled = True
-        except Exception:
-            pass
+    # ── DPI ─────────────────────────────────────────────────────────────
 
     def showEvent(self, ev):
         super().showEvent(ev)
-        if not self._acrylic_tried:
-            self._enable_acrylic()
-            self._acrylic_tried = True
-        # DPI-aware scaling: on a 150% scaled display, scale up dimensions
         screen = self.screen()
         if screen:
-            ratio = screen.devicePixelRatio()
-            self._dpi_scale = max(1.0, ratio)
+            self._dpi_scale = max(1.0, screen.devicePixelRatio())
 
     # ── public API (unchanged signatures) ───────────────────────────────
 
@@ -162,7 +136,7 @@ class WaveformOverlay(QWidget):
         self._toast_text = text or ""
         self._toast_until = _time.monotonic() + ms / 1000.0
         self._mode = "toast"
-        self._anim_dir = 1  # fade in
+        self._anim_dir = 1
         if not self.isVisible():
             self._opacity = 0.0
         self._apply_size()
@@ -183,7 +157,7 @@ class WaveformOverlay(QWidget):
         self._preview_text = ""
         self._glow_phase = 0.0
         self._dot_phase = 0.0
-        self._anim_dir = 1  # fade in
+        self._anim_dir = 1
         if not self.isVisible():
             self._opacity = 0.0
         self._apply_size()
@@ -202,7 +176,6 @@ class WaveformOverlay(QWidget):
     def hide_overlay(self):
         if self._mode == "hidden":
             return
-        # Start fade-out animation instead of instant hide
         self._anim_dir = -1
         if not self._timer.isActive():
             self._timer.start(TICK_MS)
@@ -214,7 +187,7 @@ class WaveformOverlay(QWidget):
         if self._mode == "toast":
             fm = QFontMetrics(self._toast_font)
             tw = fm.horizontalAdvance(self._toast_text or "")
-            self.resize(int(max(TOAST_STD_W, tw + 48) * s), int(self._base_h * s))
+            self.resize(int(max(TOAST_STD_W, tw + 52) * s), int(self._base_h * s))
             return
         w = int(PREVIEW_W * s)
         h = int((self._total_h if self._preview_on else self._base_h) * s)
@@ -227,14 +200,12 @@ class WaveformOverlay(QWidget):
             w = self.width()
             target_y = g.bottom() - self.height() - 18
             target_x = g.center().x() - w // 2
-            # Slide-up offset during entrance/exit animation
-            offset = int((1.0 - self._opacity) * 16)
+            offset = int((1.0 - self._opacity) * 18)
             self.move(target_x, target_y + offset)
 
     # ── animation tick ──────────────────────────────────────────────────
 
     def _tick(self):
-        # Advance entrance/exit animation
         if self._anim_dir == 1 and self._opacity < 1.0:
             self._opacity = min(1.0, self._opacity + TICK_MS / ANIM_IN_MS)
             self._place()
@@ -251,7 +222,6 @@ class WaveformOverlay(QWidget):
                 return
             self._place()
 
-        # Mode-specific updates
         if self._mode == "toast":
             if _time.monotonic() >= self._toast_until:
                 self._toast_text = ""
@@ -266,14 +236,13 @@ class WaveformOverlay(QWidget):
             norm = min(1.0, raw * LEVEL_GAIN)
             self._smoothed = max(norm, self._smoothed * 0.72)
             self._levels.append(self._smoothed)
-            # Per-bar smooth decay for liquid feel
             for i in range(N_BARS):
                 target = self._levels[i] if i < len(self._levels) else 0.0
-                self._display[i] += (target - self._display[i]) * 0.35
-            self._dot_phase += 0.08
+                self._display[i] += (target - self._display[i]) * 0.4
+            self._dot_phase += 0.09
 
-        self._phase += 0.35       # processing shimmer speed
-        self._glow_phase += 0.06  # glow pulse (~3s cycle)
+        self._phase += 0.35
+        self._glow_phase += 0.05
         self.update()
 
     # ── paint ───────────────────────────────────────────────────────────
@@ -288,117 +257,144 @@ class WaveformOverlay(QWidget):
             p.end()
             return
 
-        if self._mode == "recording":
-            self._paint_glow(p, recording=True)
-        elif self._mode == "processing":
-            self._paint_glow(p, recording=False)
+        recording = self._mode == "recording"
+        processing = self._mode == "processing"
 
-        self._paint_glass_bg(p)
+        # ── outer glow (drawn behind the pill, extends past the window) ──
+        if recording or processing:
+            self._paint_outer_glow(p, recording)
 
-        if self._mode == "recording":
-            self._paint_recording_dot(p)
-            self._paint_waveform(p)
-        elif self._mode == "processing":
+        # ── pill body ────────────────────────────────────────────────────
+        self._paint_pill_body(p, recording)
+
+        # ── content ──────────────────────────────────────────────────────
+        if recording:
+            self._paint_rec_dot(p)
+            self._paint_bars(p, recording=True)
+        elif processing:
             self._paint_processing_dots(p)
 
         if self._preview_on and self._mode != "toast":
             self._paint_preview(p)
-        if self._profile_tag and self._mode == "recording":
+        if self._profile_tag and recording:
             self._paint_tag(p)
         p.end()
 
-    # ── layered paint helpers ───────────────────────────────────────────
+    # ── paint helpers ───────────────────────────────────────────────────
 
-    def _paint_glow(self, p, recording=True):
-        """Pulsing outer glow ring — the competitive 'wow' effect."""
-        pulse = 0.65 + 0.35 * math.sin(self._glow_phase)
-        alpha = int(35 + 25 * pulse)
-        expand = 4 + 3 * pulse
-        base = GLOW_OUTER_REC if recording else GLOW_OUTER_PRO
+    def _paint_outer_glow(self, p, recording):
+        """Soft coloured halo that bleeds past the pill edges."""
+        pulse = 0.6 + 0.4 * math.sin(self._glow_phase)
+        alpha = int(28 + 22 * pulse)
+        expand = 6 + 4 * pulse
+        base = GLOW_REC if recording else GLOW_PRO
         glow = QColor(base.red(), base.green(), base.blue(), alpha)
         p.setPen(Qt.NoPen)
         p.setBrush(glow)
-        p.drawRoundedRect(QRectF(-expand, -expand,
-                                  self.width() + expand * 2,
-                                  self.height() + expand * 2),
-                          RADIUS + expand, RADIUS + expand)
+        p.drawRoundedRect(
+            QRectF(-expand, -expand,
+                   self.width() + expand * 2,
+                   self.height() + expand * 2),
+            RADIUS + expand, RADIUS + expand)
 
-    def _paint_glass_bg(self, p):
-        """Frosted-glass pill background with layered translucency."""
+    def _paint_pill_body(self, p, recording):
+        """The pill: dark translucent body + coloured rim + top highlight."""
         w, h = self.width(), self.height()
+        # body
         p.setPen(Qt.NoPen)
-        p.setBrush(GLASS_BG)
+        p.setBrush(BODY_BG)
         p.drawRoundedRect(self.rect(), RADIUS, RADIUS)
-        # edge highlight (thin glass rim)
-        rim_alpha = GLASS_EDGE.alpha() if self._mode == "recording" else 10
-        p.setPen(QColor(GLASS_EDGE.red(), GLASS_EDGE.green(), GLASS_EDGE.blue(),
-                         rim_alpha))
+        # coloured rim
+        rim = RIM_REC if recording else RIM_PRO
         p.setBrush(Qt.NoBrush)
-        p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), RADIUS, RADIUS)
-        # inner highlight (top half reflection)
+        p.setPen(QPen(rim, 2))
+        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), RADIUS, RADIUS)
+        # subtle top highlight (frosted glass reflection)
         p.setPen(Qt.NoPen)
-        p.setBrush(GLASS_INNER)
-        p.drawRoundedRect(QRectF(3, 2, w - 6, (h - 2) * 0.45),
+        p.setBrush(INNER_HL)
+        p.drawRoundedRect(QRectF(4, 3, w - 8, h * 0.4),
                           RADIUS * 0.7, RADIUS * 0.7)
 
-    def _paint_recording_dot(self, p):
-        """Pulsing red dot on the left — universal recording indicator."""
+    def _paint_rec_dot(self, p):
+        """Pulsing red dot on the left with a soft radial glow."""
         pulse = 0.5 + 0.5 * math.sin(self._dot_phase)
         cx = PAD_X + DOT_R
         cy = self._base_h / 2
-        r = DOT_R + 1.0 * pulse
-        # glow halo
-        glow_r = r + 5 + 2 * pulse
+        r = DOT_R + pulse
+        # glow
+        glow_r = r + 8 + 3 * pulse
         grad = QRadialGradient(QPointF(cx, cy), glow_r)
-        grad.setColorAt(0, QColor(224, 82, 82, int(80 + 40 * pulse)))
-        grad.setColorAt(1, QColor(224, 82, 82, 0))
+        grad.setColorAt(0, QColor(239, 68, 68, int(70 + 50 * pulse)))
+        grad.setColorAt(1, QColor(239, 68, 68, 0))
         p.setBrush(grad)
         p.setPen(Qt.NoPen)
         p.drawEllipse(QPointF(cx, cy), glow_r, glow_r)
-        # solid dot
-        p.setBrush(REC_DOT_COLOR)
+        # dot
+        p.setBrush(QColor(239, 68, 68, 255))
         p.drawEllipse(QPointF(cx, cy), r, r)
 
-    def _paint_waveform(self, p):
-        """Recording waveform — chunky bars with glow, smooth decay, mirrored."""
-        cy = self._base_h / 2
-        bars_total_w = N_BARS * BAR_W + (N_BARS - 1) * BAR_GAP
-        # Center waveform to the right of the recording dot
+    def _paint_bars(self, p, recording):
+        """Fat equalizer bars that grow from the bottom — studio look.
+
+        Each bar has:
+        - A wide, low-alpha glow rectangle behind it (the 'bloom')
+        - The bar itself with a vertical gradient
+        - Rounded top corners only (flat bottom sitting on the baseline)
+        """
+        baseline = self._base_h - PAD_Y
         x_start = PAD_X + DOT_SPACE
         avail_w = self.width() - PAD_X - x_start
+        bars_total_w = N_BARS * BAR_W + (N_BARS - 1) * BAR_GAP
         x = x_start + max(0, (avail_w - bars_total_w) / 2)
 
-        grad = QLinearGradient(0, 0, 0, self._base_h)
-        grad.setColorAt(0.0, WAVE_TOP)
-        grad.setColorAt(0.55, WAVE_MID)
-        grad.setColorAt(1.0, WAVE_BOT)
+        grad = QLinearGradient(0, baseline - BAR_MAX, 0, baseline)
+        grad.setColorAt(0.0, WAVE_GRAD[0])
+        grad.setColorAt(0.5, WAVE_GRAD[1])
+        grad.setColorAt(1.0, WAVE_GRAD[2])
+        glow_color = WAVE_GRAD[1]
+
         for i in range(N_BARS):
-            h = max(IDLE_H, self._display[i] * BAR_MAX)
-            self._bar(p, x, cy, h, grad, WAVE_MID)
+            val = self._display[i] if recording else 0.0
+            h = max(BAR_MIN, val * BAR_MAX)
+            bx = x
+            by = baseline - h
+
+            # glow bloom
+            p.setBrush(QColor(glow_color.red(), glow_color.green(),
+                              glow_color.blue(), 45))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(QRectF(bx - 2, by - 2, BAR_W + 4, h + 4),
+                              (BAR_W + 4) / 2, (BAR_W + 4) / 2)
+
+            # bar
+            p.setBrush(QBrush(grad))
+            p.drawRoundedRect(QRectF(bx, by, BAR_W, h), BAR_W / 2, BAR_W / 2)
             x += BAR_W + BAR_GAP
 
     def _paint_processing_dots(self, p):
-        """Three bouncing dots — universal 'thinking' indicator."""
+        """Three bouncing dots — the universal 'thinking' indicator."""
         cy = self._base_h / 2
         cx = self.width() / 2
-        dot_r = 5
-        spacing = 18
+        dot_r = 6
+        spacing = 22
         for i in range(3):
-            phase = self._phase + i * 0.6
-            bounce = math.sin(phase) * 6
+            phase = self._phase + i * 0.7
+            bounce = math.sin(phase) * 7
             x = cx + (i - 1) * spacing
             y = cy + bounce
             alpha = int(160 + 95 * (0.5 + 0.5 * math.sin(phase)))
-            c = PRO_MID
             # glow
-            grad = QRadialGradient(QPointF(x, y), dot_r + 4)
-            grad.setColorAt(0, QColor(c.red(), c.green(), c.blue(), alpha // 2))
-            grad.setColorAt(1, QColor(c.red(), c.green(), c.blue(), 0))
+            grad = QRadialGradient(QPointF(x, y), dot_r + 5)
+            grad.setColorAt(0, QColor(PRO_DOT.red(), PRO_DOT.green(),
+                                       PRO_DOT.blue(), alpha // 2))
+            grad.setColorAt(1, QColor(PRO_DOT.red(), PRO_DOT.green(),
+                                       PRO_DOT.blue(), 0))
             p.setBrush(grad)
             p.setPen(Qt.NoPen)
-            p.drawEllipse(QPointF(x, y), dot_r + 4, dot_r + 4)
+            p.drawEllipse(QPointF(x, y), dot_r + 5, dot_r + 5)
             # dot
-            p.setBrush(QColor(c.red(), c.green(), c.blue(), alpha))
+            p.setBrush(QColor(PRO_DOT.red(), PRO_DOT.green(),
+                              PRO_DOT.blue(), alpha))
             p.drawEllipse(QPointF(x, y), dot_r, dot_r)
 
     def _paint_preview(self, p):
@@ -418,8 +414,8 @@ class WaveformOverlay(QWidget):
         p.setFont(self._tag_font)
         fm = QFontMetrics(self._tag_font)
         tag = self._profile_tag
-        tw, th = fm.horizontalAdvance(tag) + 12, fm.height() + 4
-        tx, ty = self.width() - tw - 8, 6
+        tw, th = fm.horizontalAdvance(tag) + 14, fm.height() + 5
+        tx, ty = self.width() - tw - 10, 8
         p.setPen(Qt.NoPen)
         p.setBrush(TAG_BG)
         p.drawRoundedRect(QRectF(tx, ty, tw, th), th / 2, th / 2)
@@ -430,35 +426,16 @@ class WaveformOverlay(QWidget):
         """Compact toast for confirmations — smaller glass pill."""
         w, h = self.width(), self.height()
         p.setPen(Qt.NoPen)
-        p.setBrush(GLASS_BG)
+        p.setBrush(BODY_BG)
         p.drawRoundedRect(self.rect(), RADIUS, RADIUS)
-        p.setPen(QColor(GLASS_EDGE))
         p.setBrush(Qt.NoBrush)
-        p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), RADIUS, RADIUS)
-        # fade out in last 0.35s
+        p.setPen(QPen(RIM_PRO, 2))
+        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), RADIUS, RADIUS)
         remaining = self._toast_until - _time.monotonic()
         alpha = 255 if remaining > 0.35 else int(max(0, remaining / 0.35) * 255)
         p.setFont(self._toast_font)
         p.setPen(QColor(226, 232, 240, alpha))
         p.drawText(self.rect(), Qt.AlignCenter, self._toast_text)
-
-    # ── bar primitive ───────────────────────────────────────────────────
-
-    @staticmethod
-    def _bar(p, x, cy, h, brush, glow_color):
-        """Draw a single waveform bar with glow — rounded ends, centred on cy."""
-        h = max(IDLE_H, h)
-        bar_w = BAR_W
-        r = bar_w / 2
-        # glow behind bar
-        p.setBrush(QColor(glow_color.red(), glow_color.green(),
-                          glow_color.blue(), 50))
-        p.setPen(Qt.NoPen)
-        p.drawRoundedRect(QRectF(x - 1, cy - h / 2 - 1, bar_w + 2, h + 2),
-                          r + 1, r + 1)
-        # bar
-        p.setBrush(brush)
-        p.drawRoundedRect(QRectF(x, cy - h / 2, bar_w, h), r, r)
 
 
 # Back-compat alias.
