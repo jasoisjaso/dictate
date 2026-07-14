@@ -1,147 +1,263 @@
 # Dictate
 
-Talk instead of type — in any Windows app. Hold a key, say what you want,
-let go, and the words appear where your cursor is. Everything runs on your
-own PC: no cloud, no account, no subscription, and your voice never leaves
-your machine.
+Talk instead of type — in any Windows app. Hold a key, speak, and your words appear where your cursor is. Everything runs on your own PC: no cloud, no account, no subscription, and your voice never leaves your machine.
 
-Built on OpenAI's Whisper (via [faster-whisper](https://github.com/SYSTRAN/faster-whisper)),
-with the polish the free tools usually skip: filler-word cleanup, a personal
-dictionary, automatic hardware tuning, and a settings window a non-technical
-person can actually use.
+Built on OpenAI's Whisper (via [faster-whisper](https://github.com/SYSTRAN/faster-whisper)), with the polish the free tools usually skip: voice commands, per-app profiles, a personal dictionary, automatic hardware tuning, and a settings window a non-technical person can actually use.
 
-## Install (no admin rights needed)
+Full **Bosnian language** support — spoken punctuation, voice commands, and filler-word removal.
 
-1. Download `Dictate-Setup-cpu.exe` (works on every PC) or
-   `Dictate-Setup-gpu.exe` (NVIDIA graphics card — faster and more accurate)
-   from the releases page.
-2. Run it. **Windows will show a blue "Windows protected your PC" warning**
-   because this installer isn't code-signed (certificates cost hundreds of
-   dollars a year; this project is free). Click **More info → Run anyway**.
-   That is the only scary-looking step, and it installs entirely into your
-   own user folder — no administrator password, no UAC prompt, nothing
-   system-wide is touched.
-3. First launch downloads the speech model once (progress bar shows how
-   long). After that it works fully offline.
+## Quick Start (3 steps)
 
-## Use it
+### Step 1: Install
 
-- **Hold Right Ctrl and talk. Let go when you're done.** Your words get
-  typed into whatever app you're in — email, Word, chat, browser, anything.
-- While you talk, a small pill at the bottom of the screen shows a live
-  waveform **and a live transcript of what it's hearing** (GPU builds), so
-  you know it heard you right before you let go. Blue shimmer = thinking.
-- Say punctuation when you want it: "period", "comma", "question mark",
-  "new line", "new paragraph", "bullet point".
-- **Fix it by voice** — no keyboard needed:
-  - **"scratch that"** — delete the whole last dictation
-  - **"delete last word"** / **"delete last three words"**
-  - **"delete last sentence"** — delete from the last period to here
-  - **"capitalize that"** / **"all caps that"** / **"lowercase that"**
-  - **"redo verbatim"** — re-inject the raw words without cleanup (if the
-    post-processing mangled something)
-  - **"replace X with Y"** — find-and-replace in the last dictation
-- **Switch modes on the fly** — press **F7** to cycle:
-  - **Auto** — detects the app (terminal = verbatim, chat = casual)
-  - **Prose** — full cleanup, sentence casing (default)
-  - **Code** — verbatim, no casing, no cleanup
-  - **Email** — professional tone
-- **Copy last dictation** — press **F8** to copy the last result to the
-  clipboard. The rescue hatch when text lands in the wrong window.
-- **Re-record last** — press **F6** to delete the last dictation and
-  immediately start recording again. One-button rescue for bad takes.
-- After each dictation a brief toast shows the **word count + undo hint**,
-  so you always know it landed and can take it back.
-- Tray icon colours: green = ready, red = recording, blue = transcribing.
-- The tray menu shows **words dictated + WPM this session**.
-- **Visualizer styles** — pick in Settings:
-  - **Equalizer** — clean grey bars (minimal, professional)
-  - **Blob** — a morphing colour-shifting orb that deforms with your pitch
-    and changes colour (green → yellow → red) as you get louder
-- New here? Right-click the tray icon → **How to use…** for a quick visual
-  walkthrough (also shown once on first run).
-- Landed in the wrong window? Press **F8** to copy the last dictation, or
-  open **History…** for the last 25.
+1. Download `Dictate-Setup-cpu.exe` from the [releases page](../../releases).
+   - Works on any Windows 10/11 PC. No GPU required.
+   - If you have an NVIDIA GPU, grab `Dictate-Setup-gpu.exe` instead (faster).
+2. Run it. Windows shows a "protected your PC" warning because the installer isn't code-signed (certificates cost hundreds of dollars). Click **More info > Run anyway**.
+3. It installs to your user folder — **no admin password, no UAC prompt**.
 
-## What makes it different
+### Step 2: First Launch
 
-- **Knows what app you're in.** Dictating into a terminal or IDE? You get
-  your words verbatim — no sentence-casing, no cleanup mangling a command.
-  Chat apps read casual, email reads professional (tones feed the optional
-  local-LLM polish). Add your own app rules in `[app_profiles]` — this is
-  the "Super Mode" context awareness the paid tools charge for, running
-  100% locally.
-- **Live transcript preview** in the pill while you speak (GPU builds) —
-  the most-requested dictation feature on Reddit, missing from nearly every
-  free tool.
-- **Voice macros.** Set up phrases in the config file that expand to full
-  blocks of text: say "insert my email" and it types your address; "sign off"
-  and it types your signature. Build on the dictionary engine you already have.
-- **Dictation modes.** Press F7 to cycle between Auto (per-app detection),
-  Prose (full cleanup), Code (verbatim), and Email (professional) — the
-  "Super Mode" context awareness the paid tools charge for, running
-  100% locally.
-- **Smart injection.** Short phrases are typed like real keystrokes; long
-  or multi-line text is pasted instantly via a clipboard swap (your
-  clipboard is restored afterwards). A typed Enter can't accidentally
-  "send" a half-finished chat message.
-- **Session history** (tray → History…): every dictation from this session
-  with one-click copy — the rescue hatch when text landed in the wrong
-  window. Kept in memory only, never written to disk.
-- **Audio cues**: a soft beep on record start/stop so you never talk into
-  the void. Turn off in `[feedback]`.
+1. On first launch, Dictate downloads the speech model (about 500 MB, one-time only). A progress bar shows the download.
+2. After the download, the model warms up automatically (a few seconds).
+3. A **green microphone icon** appears in your system tray (bottom-right). You're ready.
 
-## Settings (right-click the tray icon → Settings…)
+### Step 3: Dictate
 
-- **How you talk to it** — hold-a-key (default) or tap-to-start/hands-free,
-  with any key you like. Click the key button and press your choice.
-- **Microphone** — pick a specific mic or leave on system default.
-- **Model** — Auto picks the best for your hardware. Manual choices from
-  tiny (fast, rough) to large-v3 (slow, most accurate).
-- **Language** — English by default; set your language or Auto-detect.
-  Whisper speaks ~99 languages. Full **Bosnian** support including spoken
-  punctuation (tačka, zarez, upitnik, uzvičnik, novi red, novi pasus) and
-  voice commands (obriši to, obriši posljednju riječ, podebljaj, iskosi,
-  označi sve, zamijeni X sa Y). Bosnian filler words (e, ono, znači, dakle,
-  pa, vale, ajde, ma) are stripped automatically.
-- **Make me sound good** — filler-word removal ("um", "uh"), plus **My
-  words**: teach it names and jargon ("woolies" → "Woolworths") and it will
-  both spell them correctly and expand them as you speak.
-- **Start when I log in** — one checkbox, no Task Scheduler fiddling.
-- **Test your setup** — record 3 seconds and see the transcription inline,
-  so you can validate your mic and model before diving in.
+1. Click into any text field — Notepad, Word, email, browser, a terminal, anything.
+2. **Hold Right Ctrl and talk.** Let go when you're done.
+3. Your words appear at the cursor, with punctuation and cleanup applied automatically.
+
+That's it. You're dictating. Offline. Free.
+
+---
+
+## How to Use
+
+### Basic Dictation
+
+- **Hold Right Ctrl** and talk. Release when done. Text appears at your cursor.
+- A small overlay shows a live visualizer so you know it's hearing you.
+- After each dictation, a brief toast shows the word count + undo hint.
+- Tray icon colours: **green** = ready, **red** = recording, **blue** = transcribing.
+
+### Spoken Punctuation
+
+Say these words and they get inserted as punctuation:
+
+| Say | You get | Say | You get |
+|-----|---------|-----|---------|
+| period | . | comma | , |
+| question mark | ? | exclamation mark | ! |
+| new line | (new line) | new paragraph | (double new line) |
+| semicolon | ; | colon | : |
+| open parenthesis | ( | close parenthesis | ) |
+| bullet point | - (new line bullet) | | |
+
+### Bosnian Punctuation
+
+| Reci | Dobiješ | Reci | Dobiješ |
+|------|---------|------|---------|
+| tačka | . | zarez | , |
+| upitnik | ? | uzvičnik | ! |
+| novi red | (novi red) | novi pasus | (novi pasus) |
+| tačka-zarez | ; | dvotačka | : |
+| otvorena zagrada | ( | zatvorena zagrada | ) |
+| trotačka | … | navodnici | " |
+| crta | — | | |
+
+### Voice Commands
+
+Say these **as their own dictation** (hold the key, say only the command, release):
+
+| Command | What it does |
+|---------|-------------|
+| "scratch that" / "undo that" | Delete the whole last dictation |
+| "delete last word" | Delete just the last word |
+| "delete last three words" | Delete the last N words |
+| "delete last sentence" | Delete from the last period to here |
+| "capitalize that" | Re-inject with Title Case |
+| "all caps that" | Re-inject UPPERCASE |
+| "lowercase that" | Re-inject lowercase |
+| "bold that" | Wrap last dictation in **markdown bold** |
+| "italic that" | Wrap last dictation in *markdown italic* |
+| "select all" | Send Ctrl+A (select all text) |
+| "replace X with Y" | Find-and-replace in the last dictation |
+| "redo verbatim" | Re-inject raw words without cleanup |
+
+### Bosnian Voice Commands
+
+| Komanda | Šta radi |
+|---------|---------|
+| obriši to / poništi | Obriše zadnji diktat |
+| obriši posljednju riječ | Obriše zadnju riječ |
+| obriši posljednje dvije riječi | Obriše zadnje dvije riječi |
+| obriši posljednje tri riječi | Obriše zadnje tri riječi |
+| obriši posljednju rečenicu | Obriše od zadnje tačke |
+| podebljaj | **Podebljano** (bold) |
+| iskosi | *Iskošeno* (italic) |
+| označi sve | Selektuje sve (Ctrl+A) |
+| zamijeni X sa Y | Zamijeni riječ X sa Y |
+| poništi | Sinonim za obriši to |
+
+### Hotkeys
+
+| Key | Action |
+|-----|--------|
+| **Right Ctrl** (hold) | Push-to-talk |
+| **F7** | Cycle dictation modes (Auto > Prose > Code > Email) |
+| **F8** | Copy last dictation to clipboard |
+| **F6** | Delete last dictation + immediately re-record |
+| **Pause** | Pause/resume recording mid-take |
+| **Esc** | Cancel recording (abort) |
+| **F9** | Toggle mode (tap to start/stop, hands-free) |
+
+All keys are configurable in Settings.
+
+### Dictation Modes (F7)
+
+Press **F7** to cycle between modes:
+
+- **Auto** — detects the app automatically (terminal = verbatim, chat = casual, email = professional)
+- **Prose** — full cleanup, sentence casing (default behaviour)
+- **Code** — verbatim, no casing, no cleanup (for terminals and code editors)
+- **Email** — professional tone
+
+### Per-App Profiles
+
+In Auto mode, Dictate detects which app has focus and adapts:
+
+- **Terminals / IDEs** (PowerShell, VS Code, etc.) — verbatim: no auto-casing, no filler removal
+- **Chat apps** (Discord, Slack, Teams) — casual tone
+- **Email** (Outlook, Thunderbird) — professional tone
+
+Add your own app rules in `settings.toml` under `[app_profiles]`.
+
+### Filler Word Removal
+
+"Um", "uh", "erm", and other filler words are stripped automatically. Bosnian fillers (e, ono, znači, dakle, pa, vale, ajde, ma) are also stripped. Add your own in Settings > "Extra filler words to strip".
+
+### Personal Dictionary
+
+Teach it names and jargon in Settings > "My words":
+- Say "woolies" → it types "Woolworths"
+- Also boosts Whisper's spelling of those words
+
+### Voice Macros
+
+Set up phrases in `settings.toml` under `[macros]` that expand to full blocks of text:
+```toml
+[macros]
+"insert my email" = "your@email.com"
+"sign off" = "Best regards,\nYour Name"
+```
+Say the phrase, get the full block typed.
+
+### Auto-Punctuation
+
+Toggle in Settings. Automatically adds trailing periods and capitalises the first letter — no need to say "period" every time. (Whisper's large models usually punctuate on their own, but this helps on smaller/CPU models.)
+
+### Regex Transforms
+
+Define find-and-replace rules in `settings.toml`:
+```toml
+[[transforms]]
+find = "gonna"
+replace = "going to"
+
+[[transforms]]
+find = "\\bwanna\\b"
+replace = "want to"
+```
+
+### Visualizer Styles
+
+Pick in Settings:
+- **Equalizer** — clean grey bars (minimal, professional)
+- **Blob** — a morphing colour-shifting orb that deforms with pitch and changes colour (green > yellow > red) as you get louder
+
+### Continuous Mode
+
+Set `mode = "continuous"` in settings.toml. After each transcription, Dictate automatically restarts recording after a brief pause. Keeps listening until you tap the key to stop. Hands-free for long writing sessions.
+
+### Toggle Mode
+
+Set `mode = "toggle"`. Tap the key once to start recording (auto-stops on silence). Tap again to stop. Hands-free without holding a key.
+
+### Session History
+
+Right-click the tray icon > **History...** to see your last 25 dictations with one-click copy. Toggle "Save history to disk" in Settings to persist across sessions (off by default for privacy).
+
+### Mic Test
+
+Settings > "Test your setup" > "Record 3s & transcribe". Records 3 seconds, transcribes inline, and shows the result so you can verify your mic and model are working.
+
+### WPM Stat
+
+The tray menu shows your session word count and words-per-minute: "1,247 words · 142 WPM this session".
+
+---
+
+## Settings (right-click tray icon > Settings)
+
+| Setting | What it does |
+|---------|-------------|
+| How you talk to it | Push-to-talk / toggle / continuous mode + key capture |
+| Copy last dictation key | Configurable hotkey (default F8) |
+| Cycle modes key | Configurable hotkey (default F7) |
+| Re-record last key | Configurable hotkey (default F6) |
+| Microphone | Pick a specific mic or system default |
+| Model | Auto (recommended) or manual: tiny > large-v3 |
+| Language | English, Bosnian, Croatian, Serbian, German, +90 more |
+| Visualizer | Equalizer or Blob |
+| Remove filler words | Strip "um", "uh", "e", "ono", etc. |
+| Auto-punctuation | Add periods + capitalise automatically |
+| Extra filler words | Your custom words to strip |
+| My words | Personal dictionary (spoken → typed) |
+| Save history to disk | Persist dictation history (off by default) |
+| Start when I log in | One checkbox, no Task Scheduler needed |
+| Test your setup | Record 3s + transcribe inline |
+
+---
 
 ## Will it run on my PC?
 
-Auto mode measures your hardware and picks the strongest model that fits:
+Auto mode detects your hardware and picks the best model:
 
-| Your hardware              | What Auto picks                | Experience              |
-|----------------------------|--------------------------------|-------------------------|
-| NVIDIA GPU, 6 GB+ VRAM     | large-v3-turbo, float16        | Best. Instant + accurate|
-| NVIDIA GPU, 4.5–6 GB       | large-v3-turbo, int8           | Nearly as good          |
-| NVIDIA GPU, 3–4.5 GB       | small, int8                    | Fast, good accuracy     |
-| NVIDIA GPU, under 3 GB     | base, int8                     | Fast, decent accuracy   |
-| AMD GPU                    | small, int8 (CPU)              | Works; DirectML support planned |
-| No GPU (CPU only)          | small, int8                    | A beat slower, still good|
+| Your hardware | What Auto picks | Experience |
+|---|---|---|
+| NVIDIA GPU, 6 GB+ VRAM | large-v3-turbo, float16 | Best. Instant + accurate |
+| NVIDIA GPU, 4.5-6 GB | large-v3-turbo, int8 | Nearly as good |
+| NVIDIA GPU, 3-4.5 GB | small, int8 | Fast, good accuracy |
+| NVIDIA GPU, under 3 GB | base, int8 | Fast, decent accuracy |
+| AMD GPU | small, int8 (CPU) | Works; DirectML support planned |
+| No GPU (CPU only) | small, int8 | A beat slower, still good |
 
-You can override any of this in Settings. If a GPU load fails for any
-reason, Dictate quietly falls back to CPU instead of crashing.
+If a GPU load fails, Dictate quietly falls back to CPU instead of crashing.
+
+### Engine Optimizations
+
+- **Model warmup** — dummy 1s transcription at startup so the first real use is instant
+- **Adaptive beam_size** — beam_size=1 for short takes (2-3x faster), 5 for long
+- **without_timestamps** — 20% faster inference (we don't need timestamps)
+- **num_workers=1** — prevents thread contention with audio capture
+
+---
 
 ## Privacy
 
-Audio is processed in memory on your machine and thrown away. Nothing is
-recorded to disk, nothing is uploaded anywhere, ever. The only network
-traffic is the one-time model download from Hugging Face.
+- Audio is processed in memory and thrown away. Nothing is recorded to disk.
+- Nothing is uploaded anywhere, ever. The only network traffic is the one-time model download from Hugging Face.
+- The log file records timings and errors only — not the words you dictate.
+- History is session-only by default. Opt-in to persist to disk.
 
-The activity log (`%LOCALAPPDATA%\TranscribeDictate\dictate.log`) records
-timings and errors only — the words you dictate are **not** written to it at
-the normal log level, and the log auto-rotates so it can't grow without bound.
+---
 
-## Build it yourself (developers)
+## Build from Source (developers)
 
 ```
-git clone https://gitea.taild045e.ts.net/jaso/transcribe.git
-cd transcribe
+git clone https://github.com/jasoisjaso/dictate.git
+cd dictate
 setup-windows.bat              # creates .venv-win + installs deps (~5 min)
 dictate.bat                    # run from source
 .venv-win\Scripts\python tests\smoke_win.py   # verify: ALL CHECKS PASSED
@@ -152,20 +268,16 @@ ISCC packaging\installer.iss   # build the per-user installer (Inno Setup 6)
 
 Pure-logic tests run anywhere: `python -m pytest tests -q --ignore=tests/smoke_win.py`.
 
-## Bonus: web transcriber (WSL/Linux)
+## Bonus: Web Transcriber (WSL/Linux)
 
-`run.sh` starts a drag-and-drop file transcriber at `http://localhost:8737`
-— drop any audio/video file, get TXT/SRT/VTT/JSON out. Same engine, GPU
-accelerated, handles long recordings.
-
-## Roadmap
-
-- **AMD GPU acceleration via DirectML** — run Whisper on AMD graphics cards
-  using onnxruntime-directml (no NVIDIA or ROCm required). Currently AMD
-  GPUs are detected and the app runs on CPU.
-- **Voice macros UI** — a Settings panel for managing voice macros (currently
-  config-file only).
+`run.sh` starts a drag-and-drop file transcriber at `http://localhost:8737` — drop any audio/video file, get TXT/SRT/VTT/JSON out. Same engine, GPU accelerated, handles long recordings.
 
 ## License
 
 MIT. Whisper models are MIT (OpenAI); faster-whisper is MIT (SYSTRAN).
+
+## Roadmap
+
+- **AMD GPU acceleration via DirectML** — run Whisper on AMD graphics cards using onnxruntime-directml
+- **Voice macros UI** — a Settings panel for managing voice macros (currently config-file only)
+- **Streaming text injection** — show words as they're transcribed, not all at once after release

@@ -22,3 +22,18 @@ models/
 # editor / OS cruft
 .DS_Store
 Thumbs.db
+
+# internal planning docs (not for public repo)
+.hermes/
+docs/hardening-audit.md
+docs/ux-and-youtube-research.md
+docs/v2-improvement-plan.md
+docs/youtube-production-guide.md
+docs/youtube-video-guide.md
+
+# temp/build scripts
+run_iscc.bat
+
+# stray dev files
+google research.md
+C:UsersJasoDesktop_cu_test.py
