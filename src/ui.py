@@ -132,6 +132,7 @@ class DictationTrayApp(QObject):
         self.overlay.set_level_source(self.recorder.current_level)
         self.last_injected_len = 0
         self.last_injected_text = ""
+        self.last_raw_text = ""      # raw transcript (pre-cleanup) for "redo verbatim"
         self._session_words = 0
         self._session_start = time.time()
         self._dict_mode = "auto"  # cycle via F7: auto -> prose -> code -> email
@@ -690,6 +691,25 @@ class DictationTrayApp(QObject):
                                       "lower": "lowercase",
                                       "title": "Capitalized"}.get(cmd.mode, "done"))
             return
+        if cmd.kind == "redo_verbatim":
+            raw = self.last_raw_text
+            if not raw.strip():
+                self.overlay.flash_toast("nothing to redo")
+                return
+            # Backspace the last injection, re-inject the raw words as-is
+            if self.last_injected_len > 0:
+                win32_input.inject_backspaces(self.last_injected_len)
+            payload = raw if raw.endswith("\n") else raw + " "
+            how = win32_input.choose_injection(payload, mode=self.inject_mode,
+                                               paste_threshold=self.paste_threshold)
+            if how == "paste":
+                win32_input.inject_text_via_paste(payload)
+            else:
+                win32_input.inject_text_native_unicode(payload)
+            self.last_injected_text = payload
+            self.last_injected_len = len(payload)
+            self.overlay.flash_toast("redone verbatim")
+            return
 
     def _on_error(self, msg: str):
         log.error("%s", msg)
@@ -720,6 +740,9 @@ class DictationTrayApp(QObject):
             log.info("transcribed %.1fs audio in %.1fs (%d chars)",
                      len(audio) / 16000, time.time() - t0, len(text))
             log.debug("result text: %r", text)
+            # Stash the raw transcript so "redo verbatim" can re-inject it
+            # without cleanup/casing applied.
+            self.last_raw_text = raw.strip()
             self._sig_result.emit(text)
         except Exception as ex:
             log.exception("transcription failed")

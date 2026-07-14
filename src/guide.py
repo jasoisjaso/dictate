@@ -256,7 +256,8 @@ class GuideDialog(QDialog):
                      "&nbsp;&nbsp;• <b>\"scratch that\"</b> — delete the whole last bit<br>"
                      "&nbsp;&nbsp;• <b>\"delete last word\"</b> (or \"…last three words\")<br>"
                      "&nbsp;&nbsp;• <b>\"capitalize that\"</b> / <b>\"all caps that\"</b> / "
-                     "<b>\"lowercase that\"</b><br><br>"
+                     "<b>\"lowercase that\"</b><br>"
+                     "&nbsp;&nbsp;• <b>\"redo verbatim\"</b> — re-inject raw words without cleanup<br><br>"
                      "Say punctuation too: \"period\", \"comma\", \"question mark\", "
                      "\"new line\", \"new paragraph\", \"bullet point\"."},
             {"kind": "modes", "title": "Switch modes on the fly",

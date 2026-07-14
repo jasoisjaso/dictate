@@ -65,3 +65,18 @@ def test_tail_no_trailing_space():
 def test_tail_empty():
     assert vc.tail_word_len("", 3) == 0
     assert vc.tail_word_len("word", 0) == 0
+
+
+# ---- redo_verbatim command -----------------------------------------------
+
+def test_redo_verbatim_variants():
+    for s in ["redo that", "redo verbatim", "verbatim that", "raw that",
+              "redo raw", "try again raw"]:
+        cmd = vc.parse(s)
+        assert cmd is not None
+        assert cmd.kind == "redo_verbatim"
+
+
+def test_redo_verbatim_not_triggered_by_prose():
+    assert vc.parse("redo that last step") is None
+    assert vc.parse("I want to redo the whole thing") is None

@@ -84,6 +84,10 @@ def parse(text: str) -> Command | None:
     if t in ("lowercase that", "lower case that", "lowercase", "no caps"):
         return Command("recase", mode="lower")
 
+    if t in ("redo that", "redo verbatim", "verbatim that", "raw that",
+             "redo raw", "try again raw"):
+        return Command("redo_verbatim")
+
     return None
 
 

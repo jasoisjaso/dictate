@@ -242,6 +242,23 @@ class SettingsDialog(QDialog):
             self.chk_login.setEnabled(False)
         root.addWidget(self.chk_login)
 
+        # --- Mic test ---------------------------------------------------------
+        g_test = QGroupBox("Test your setup")
+        tv = QVBoxLayout(g_test)
+        tv.addWidget(QLabel("Record 3 seconds of speech and see if it transcribes:"))
+        row = QHBoxLayout()
+        self.btn_mic_test = QPushButton("Record 3s & transcribe")
+        self.btn_mic_test.clicked.connect(self._run_mic_test)
+        row.addWidget(self.btn_mic_test)
+        self.lbl_mic_result = QLabel("")
+        self.lbl_mic_result.setWordWrap(True)
+        self.lbl_mic_result.setStyleSheet(
+            "background:#101214; color:#e8eaec; border:1px solid #2a2f34;"
+            "border-radius:6px; padding:10px; min-height:32px;")
+        row.addWidget(self.lbl_mic_result, 1)
+        tv.addLayout(row)
+        root.addWidget(g_test)
+
         # --- Buttons -----------------------------------------------------------
         btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         btns.accepted.connect(self._save)
@@ -258,6 +275,53 @@ class SettingsDialog(QDialog):
         r = self.tbl.currentRow()
         if r >= 0:
             self.tbl.removeRow(r)
+
+    def _run_mic_test(self):
+        """Record 3 seconds of audio, transcribe, and show the result inline.
+        Runs in a background thread so the GUI doesn't freeze."""
+        import threading
+        import numpy as np
+        self.btn_mic_test.setEnabled(False)
+        self.lbl_mic_result.setText("Recording... say something now!")
+
+        mic_idx = self.cb_mic.currentData()
+
+        def _worker():
+            try:
+                try:
+                    from . import audio as _audio
+                except ImportError:
+                    import audio as _audio
+                rec = _audio.AudioRecorder(input_device=mic_idx)
+                rec.start_recording()
+                import time as _t
+                _t.sleep(3.0)
+                audio_data = rec.stop_recording()
+                rec.close()
+                if audio_data.size < 1600:
+                    self.lbl_mic_result.setText("No audio captured — check your mic")
+                    return
+                # Transcribe using the engine
+                try:
+                    from . import engine as _engine
+                except ImportError:
+                    import engine as _engine
+                eng = _engine.WhisperTranscriber(self.cfg)
+                eng.load()
+                raw = eng.transcribe_audio_buffer(audio_data)
+                text = eng.post_process(raw) if raw else ""
+                if text:
+                    self.lbl_mic_result.setText(
+                        f"<b>Heard:</b> \"{text}\"")
+                else:
+                    self.lbl_mic_result.setText(
+                        "Nothing transcribed — try speaking louder or closer")
+            except Exception as ex:
+                self.lbl_mic_result.setText(f"Error: {ex}")
+            finally:
+                self.btn_mic_test.setEnabled(True)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _save(self):
         overlay = {

@@ -105,6 +105,7 @@ class WaveformOverlay(QWidget):
         self._total_h = self._base_h + PREVIEW_ROW_H
         self._glow_phase = 0.0
         self._dot_phase = 0.0
+        self._dpi_scale = 1.0  # updated in showEvent
 
         # animation state
         self._opacity = 0.0
@@ -140,6 +141,11 @@ class WaveformOverlay(QWidget):
         if not self._acrylic_tried:
             self._enable_acrylic()
             self._acrylic_tried = True
+        # DPI-aware scaling: on a 150% scaled display, scale up dimensions
+        screen = self.screen()
+        if screen:
+            ratio = screen.devicePixelRatio()
+            self._dpi_scale = max(1.0, ratio)
 
     # ── public API (unchanged signatures) ───────────────────────────────
 
@@ -204,12 +210,15 @@ class WaveformOverlay(QWidget):
     # ── geometry ────────────────────────────────────────────────────────
 
     def _apply_size(self):
+        s = self._dpi_scale
         if self._mode == "toast":
             fm = QFontMetrics(self._toast_font)
             tw = fm.horizontalAdvance(self._toast_text or "")
-            self.resize(max(TOAST_STD_W, tw + 48), self._base_h)
+            self.resize(int(max(TOAST_STD_W, tw + 48) * s), int(self._base_h * s))
             return
-        self.resize(PREVIEW_W, self._total_h if self._preview_on else self._base_h)
+        w = int(PREVIEW_W * s)
+        h = int((self._total_h if self._preview_on else self._base_h) * s)
+        self.resize(w, h)
 
     def _place(self):
         screen = self.screen()

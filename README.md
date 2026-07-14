@@ -37,6 +37,8 @@ person can actually use.
   - **"scratch that"** — delete the whole last dictation
   - **"delete last word"** / **"delete last three words"**
   - **"capitalize that"** / **"all caps that"** / **"lowercase that"**
+  - **"redo verbatim"** — re-inject the raw words without cleanup (if the
+    post-processing mangled something)
 - **Switch modes on the fly** — press **F7** to cycle:
   - **Auto** — detects the app (terminal = verbatim, chat = casual)
   - **Prose** — full cleanup, sentence casing (default)
@@ -94,6 +96,8 @@ person can actually use.
   words**: teach it names and jargon ("woolies" → "Woolworths") and it will
   both spell them correctly and expand them as you speak.
 - **Start when I log in** — one checkbox, no Task Scheduler fiddling.
+- **Test your setup** — record 3 seconds and see the transcription inline,
+  so you can validate your mic and model before diving in.
 
 ## Will it run on my PC?
 
@@ -147,12 +151,8 @@ accelerated, handles long recordings.
 - **AMD GPU acceleration via DirectML** — run Whisper on AMD graphics cards
   using onnxruntime-directml (no NVIDIA or ROCm required). Currently AMD
   GPUs are detected and the app runs on CPU.
-- **Mic test in Settings** — record 3 seconds and see the transcription
-  inline, so you can validate your setup before diving in.
 - **Voice macros UI** — a Settings panel for managing voice macros (currently
   config-file only).
-- **"Redo as verbatim"** — re-inject the raw transcript without cleanup if
-  the post-processing mangled something.
 
 ## License
 
