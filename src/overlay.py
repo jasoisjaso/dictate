@@ -1,21 +1,12 @@
-"""Recording overlay — a glowing pill with a dramatic, premium equalizer.
+"""Recording overlay — just the equalizer, nothing else.
 
-The old version had thin 2px bars and a flat translucent background that
-looked like every other basic waveform widget. This version is completely
-different:
+No pill, no background rectangle, no rim. The waveform bars float on
+screen by themselves, large and grey, the way a clean audio meter looks.
 
-- No acrylic / no DWMAPI — the translucent window with rounded painting IS
-  the pill shape. Acrylic was filling the window rectangle and squaring the
-  corners. Gone.
-- Fat 6px bars with 4px gaps and per-bar glow halos — looks like a real
-  studio equalizer, not a toy oscilloscope.
-- Bars grow from the BOTTOM (not centred) — the Wispr Flow look.
-- Rounded gradient body with a 2px coloured rim that matches the state.
-- Big pulsing recording dot on the left with a soft glow.
-- Bouncing-dot processing animation (three dots, not a shimmer).
-- Smooth fade+slide entrance, fade exit.
-- Per-bar smoothed decay for a liquid feel.
-- DPI-aware sizing.
+The bars grow from a bottom baseline, are smoothed per-bar for a liquid
+feel, and have a subtle glow. A small pulsing red dot on the left signals
+recording. Processing = three bouncing grey dots. Toasts are a small
+plain text label with no background.
 
 API unchanged — ui.py calls the same methods.
 """
@@ -27,49 +18,44 @@ from collections import deque
 
 from PySide6.QtCore import Qt, QTimer, QRectF, QPointF
 from PySide6.QtGui import (QColor, QPainter, QLinearGradient, QRadialGradient,
-                           QFont, QFontMetrics, QPen, QBrush)
+                           QFont, QFontMetrics, QBrush)
 from PySide6.QtWidgets import QWidget
 
 # ── layout ──────────────────────────────────────────────────────────────
-N_BARS = 24
-BAR_W = 6
-BAR_GAP = 4
-BAR_MAX = 44
-BAR_MIN = 4
-PAD_X = 30
-PAD_Y = 22
+N_BARS = 28
+BAR_W = 7
+BAR_GAP = 5
+BAR_MAX = 52
+BAR_MIN = 5
+PAD_X = 34
+PAD_Y = 18
 LEVEL_GAIN = 7.0
-PREVIEW_W = 640
-PREVIEW_ROW_H = 26
-TOAST_STD_W = 240
-RADIUS = 28
+PREVIEW_W = 680
+PREVIEW_ROW_H = 24
+TOAST_STD_W = 260
+RADIUS = 20
 
 DOT_R = 6
-DOT_SPACE = 32
+DOT_SPACE = 36
 
 # ── timing ──────────────────────────────────────────────────────────────
 TICK_MS = 33
 TOAST_DEFAULT_MS = 1800
-ANIM_IN_MS = 220
-ANIM_OUT_MS = 140
+ANIM_IN_MS = 200
+ANIM_OUT_MS = 130
 
 # ── colours ─────────────────────────────────────────────────────────────
-BODY_BG = QColor(14, 16, 22, 215)
-RIM_REC = QColor(224, 82, 82, 180)
-RIM_PRO = QColor(77, 163, 255, 160)
-INNER_HL = QColor(255, 255, 255, 10)
+BAR_GRAD = [QColor(180, 188, 200), QColor(140, 150, 165), QColor(100, 110, 125)]
+BAR_GLOW = QColor(140, 150, 165, 40)
 
-GLOW_REC = QColor(224, 82, 82)
-GLOW_PRO = QColor(77, 163, 255)
+PRO_DOT = QColor(150, 160, 175)
 
-WAVE_GRAD = [QColor("#5eead4"), QColor("#38bdf8"), QColor("#818cf8")]
+TEXT_ACTIVE = QColor(220, 226, 234, 230)
+TEXT_MUTED = QColor(148, 163, 184, 120)
+TAG_TEXT = QColor(186, 230, 253, 200)
+TOAST_TEXT = QColor(220, 226, 234, 230)
 
-PRO_DOT = QColor("#4da3ff")
-
-TEXT_ACTIVE = QColor(226, 232, 240, 240)
-TEXT_MUTED = QColor(148, 163, 184, 140)
-TAG_BG = QColor(56, 189, 248, 50)
-TAG_TEXT = QColor(186, 230, 253, 235)
+REC_DOT = QColor(239, 68, 68)
 
 
 class WaveformOverlay(QWidget):
@@ -106,14 +92,11 @@ class WaveformOverlay(QWidget):
         self._dot_phase = 0.0
         self._dpi_scale = 1.0
 
-        # animation state
         self._opacity = 0.0
         self._anim_dir = 0
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
-
-    # ── DPI ─────────────────────────────────────────────────────────────
 
     def showEvent(self, ev):
         super().showEvent(ev)
@@ -121,7 +104,7 @@ class WaveformOverlay(QWidget):
         if screen:
             self._dpi_scale = max(1.0, screen.devicePixelRatio())
 
-    # ── public API (unchanged signatures) ───────────────────────────────
+    # ── public API ──────────────────────────────────────────────────────
 
     def set_level_source(self, fn):
         self._level_source = fn
@@ -187,7 +170,7 @@ class WaveformOverlay(QWidget):
         if self._mode == "toast":
             fm = QFontMetrics(self._toast_font)
             tw = fm.horizontalAdvance(self._toast_text or "")
-            self.resize(int(max(TOAST_STD_W, tw + 52) * s), int(self._base_h * s))
+            self.resize(int(max(TOAST_STD_W, tw + 52) * s), int(40 * s))
             return
         w = int(PREVIEW_W * s)
         h = int((self._total_h if self._preview_on else self._base_h) * s)
@@ -200,7 +183,7 @@ class WaveformOverlay(QWidget):
             w = self.width()
             target_y = g.bottom() - self.height() - 18
             target_x = g.center().x() - w // 2
-            offset = int((1.0 - self._opacity) * 18)
+            offset = int((1.0 - self._opacity) * 16)
             self.move(target_x, target_y + offset)
 
     # ── animation tick ──────────────────────────────────────────────────
@@ -260,17 +243,9 @@ class WaveformOverlay(QWidget):
         recording = self._mode == "recording"
         processing = self._mode == "processing"
 
-        # ── outer glow (drawn behind the pill, extends past the window) ──
-        if recording or processing:
-            self._paint_outer_glow(p, recording)
-
-        # ── pill body ────────────────────────────────────────────────────
-        self._paint_pill_body(p, recording)
-
-        # ── content ──────────────────────────────────────────────────────
         if recording:
             self._paint_rec_dot(p)
-            self._paint_bars(p, recording=True)
+            self._paint_bars(p)
         elif processing:
             self._paint_processing_dots(p)
 
@@ -282,64 +257,30 @@ class WaveformOverlay(QWidget):
 
     # ── paint helpers ───────────────────────────────────────────────────
 
-    def _paint_outer_glow(self, p, recording):
-        """Soft coloured halo that bleeds past the pill edges."""
-        pulse = 0.6 + 0.4 * math.sin(self._glow_phase)
-        alpha = int(28 + 22 * pulse)
-        expand = 6 + 4 * pulse
-        base = GLOW_REC if recording else GLOW_PRO
-        glow = QColor(base.red(), base.green(), base.blue(), alpha)
-        p.setPen(Qt.NoPen)
-        p.setBrush(glow)
-        p.drawRoundedRect(
-            QRectF(-expand, -expand,
-                   self.width() + expand * 2,
-                   self.height() + expand * 2),
-            RADIUS + expand, RADIUS + expand)
-
-    def _paint_pill_body(self, p, recording):
-        """The pill: dark translucent body + coloured rim + top highlight."""
-        w, h = self.width(), self.height()
-        # body
-        p.setPen(Qt.NoPen)
-        p.setBrush(BODY_BG)
-        p.drawRoundedRect(self.rect(), RADIUS, RADIUS)
-        # coloured rim
-        rim = RIM_REC if recording else RIM_PRO
-        p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(rim, 2))
-        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), RADIUS, RADIUS)
-        # subtle top highlight (frosted glass reflection)
-        p.setPen(Qt.NoPen)
-        p.setBrush(INNER_HL)
-        p.drawRoundedRect(QRectF(4, 3, w - 8, h * 0.4),
-                          RADIUS * 0.7, RADIUS * 0.7)
-
     def _paint_rec_dot(self, p):
-        """Pulsing red dot on the left with a soft radial glow."""
+        """Small pulsing red dot on the left."""
         pulse = 0.5 + 0.5 * math.sin(self._dot_phase)
         cx = PAD_X + DOT_R
         cy = self._base_h / 2
-        r = DOT_R + pulse
-        # glow
-        glow_r = r + 8 + 3 * pulse
+        r = DOT_R + pulse * 0.8
+        # soft glow
+        glow_r = r + 7 + 2 * pulse
         grad = QRadialGradient(QPointF(cx, cy), glow_r)
-        grad.setColorAt(0, QColor(239, 68, 68, int(70 + 50 * pulse)))
+        grad.setColorAt(0, QColor(239, 68, 68, int(55 + 35 * pulse)))
         grad.setColorAt(1, QColor(239, 68, 68, 0))
         p.setBrush(grad)
         p.setPen(Qt.NoPen)
         p.drawEllipse(QPointF(cx, cy), glow_r, glow_r)
         # dot
-        p.setBrush(QColor(239, 68, 68, 255))
+        p.setBrush(REC_DOT)
         p.drawEllipse(QPointF(cx, cy), r, r)
 
-    def _paint_bars(self, p, recording):
-        """Fat equalizer bars that grow from the bottom — studio look.
+    def _paint_bars(self, p):
+        """Large grey equalizer bars growing from the bottom baseline.
 
-        Each bar has:
-        - A wide, low-alpha glow rectangle behind it (the 'bloom')
-        - The bar itself with a vertical gradient
-        - Rounded top corners only (flat bottom sitting on the baseline)
+        No background, no pill — just the bars floating on screen.
+        Each bar has a subtle glow bloom behind it and a grey vertical
+        gradient (light at top, darker at bottom).
         """
         baseline = self._base_h - PAD_Y
         x_start = PAD_X + DOT_SPACE
@@ -348,20 +289,18 @@ class WaveformOverlay(QWidget):
         x = x_start + max(0, (avail_w - bars_total_w) / 2)
 
         grad = QLinearGradient(0, baseline - BAR_MAX, 0, baseline)
-        grad.setColorAt(0.0, WAVE_GRAD[0])
-        grad.setColorAt(0.5, WAVE_GRAD[1])
-        grad.setColorAt(1.0, WAVE_GRAD[2])
-        glow_color = WAVE_GRAD[1]
+        grad.setColorAt(0.0, BAR_GRAD[0])
+        grad.setColorAt(0.5, BAR_GRAD[1])
+        grad.setColorAt(1.0, BAR_GRAD[2])
 
         for i in range(N_BARS):
-            val = self._display[i] if recording else 0.0
+            val = self._display[i]
             h = max(BAR_MIN, val * BAR_MAX)
             bx = x
             by = baseline - h
 
             # glow bloom
-            p.setBrush(QColor(glow_color.red(), glow_color.green(),
-                              glow_color.blue(), 45))
+            p.setBrush(BAR_GLOW)
             p.setPen(Qt.NoPen)
             p.drawRoundedRect(QRectF(bx - 2, by - 2, BAR_W + 4, h + 4),
                               (BAR_W + 4) / 2, (BAR_W + 4) / 2)
@@ -372,21 +311,21 @@ class WaveformOverlay(QWidget):
             x += BAR_W + BAR_GAP
 
     def _paint_processing_dots(self, p):
-        """Three bouncing dots — the universal 'thinking' indicator."""
+        """Three bouncing grey dots — thinking indicator."""
         cy = self._base_h / 2
         cx = self.width() / 2
-        dot_r = 6
-        spacing = 22
+        dot_r = 7
+        spacing = 26
         for i in range(3):
             phase = self._phase + i * 0.7
-            bounce = math.sin(phase) * 7
+            bounce = math.sin(phase) * 8
             x = cx + (i - 1) * spacing
             y = cy + bounce
-            alpha = int(160 + 95 * (0.5 + 0.5 * math.sin(phase)))
+            alpha = int(140 + 100 * (0.5 + 0.5 * math.sin(phase)))
             # glow
             grad = QRadialGradient(QPointF(x, y), dot_r + 5)
             grad.setColorAt(0, QColor(PRO_DOT.red(), PRO_DOT.green(),
-                                       PRO_DOT.blue(), alpha // 2))
+                                       PRO_DOT.blue(), alpha // 3))
             grad.setColorAt(1, QColor(PRO_DOT.red(), PRO_DOT.green(),
                                        PRO_DOT.blue(), 0))
             p.setBrush(grad)
@@ -398,7 +337,7 @@ class WaveformOverlay(QWidget):
             p.drawEllipse(QPointF(x, y), dot_r, dot_r)
 
     def _paint_preview(self, p):
-        """Live transcript tail at the bottom of the pill."""
+        """Live transcript text below the bars — no background."""
         p.setFont(self._font)
         fm = QFontMetrics(self._font)
         text = self._preview_text or "listening..."
@@ -410,31 +349,24 @@ class WaveformOverlay(QWidget):
             Qt.AlignVCenter | Qt.AlignLeft, elided)
 
     def _paint_tag(self, p):
-        """Per-app profile tag pinned top-right."""
+        """Small text label top-right — no background pill."""
         p.setFont(self._tag_font)
+        p.setPen(TAG_TEXT)
         fm = QFontMetrics(self._tag_font)
         tag = self._profile_tag
-        tw, th = fm.horizontalAdvance(tag) + 14, fm.height() + 5
-        tx, ty = self.width() - tw - 10, 8
-        p.setPen(Qt.NoPen)
-        p.setBrush(TAG_BG)
-        p.drawRoundedRect(QRectF(tx, ty, tw, th), th / 2, th / 2)
-        p.setPen(TAG_TEXT)
-        p.drawText(QRectF(tx, ty, tw, th), Qt.AlignCenter, tag)
+        tw = fm.horizontalAdvance(tag) + 4
+        tx = self.width() - tw - 12
+        ty = 8
+        p.drawText(QRectF(tx, ty, tw, fm.height() + 2),
+                   Qt.AlignVCenter | Qt.AlignRight, tag)
 
     def _paint_toast(self, p):
-        """Compact toast for confirmations — smaller glass pill."""
-        w, h = self.width(), self.height()
-        p.setPen(Qt.NoPen)
-        p.setBrush(BODY_BG)
-        p.drawRoundedRect(self.rect(), RADIUS, RADIUS)
-        p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(RIM_PRO, 2))
-        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), RADIUS, RADIUS)
+        """Plain text toast — no background, no border."""
         remaining = self._toast_until - _time.monotonic()
         alpha = 255 if remaining > 0.35 else int(max(0, remaining / 0.35) * 255)
         p.setFont(self._toast_font)
-        p.setPen(QColor(226, 232, 240, alpha))
+        p.setPen(QColor(TOAST_TEXT.red(), TOAST_TEXT.green(),
+                        TOAST_TEXT.blue(), alpha))
         p.drawText(self.rect(), Qt.AlignCenter, self._toast_text)
 
 

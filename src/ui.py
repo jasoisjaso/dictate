@@ -137,6 +137,14 @@ class DictationTrayApp(QObject):
         self._session_start = time.time()
         self._dict_mode = "auto"  # cycle via F7: auto -> prose -> code -> email
         self._monitor_stop = threading.Event()
+        # Cache AMD GPU detection once at startup so we never spawn wmic again
+        self._amd_note = ""
+        try:
+            from . import device as _device
+            if hasattr(_device, '_amd_gpu_present') and _device._amd_gpu_present():
+                self._amd_note = " (AMD GPU — CPU mode)"
+        except Exception:
+            pass
 
         vad = cfg.get("vad", {})
         self.silence_timeout = float(vad.get("silence_timeout", 2.0))
@@ -475,15 +483,10 @@ class DictationTrayApp(QObject):
         label = {LOADING: "Loading model...", IDLE: "Ready", RECORDING: "Listening...",
                  TRANSCRIBING: "Transcribing..."}[state]
         dev = f" on {self.engine.active_device}" if self.engine.active_device else ""
-        # AMD GPU note
+        # AMD GPU note — cached at init so we don't spawn wmic on every state change
         amd_note = ""
-        try:
-            from . import device as _device
-            if hasattr(_device, '_amd_gpu_present') and _device._amd_gpu_present():
-                if self.engine.active_device == "cpu":
-                    amd_note = " (AMD GPU — CPU mode)"
-        except Exception:
-            pass
+        if getattr(self, "_amd_note", "") and self.engine.active_device == "cpu":
+            amd_note = self._amd_note
         self.tray.setToolTip(f"Dictate — {label}\n{self._trigger_hint()}")
         self.act_status.setText(f"{label}  ·  {self.engine.model_size}{dev}{amd_note}")
         if hasattr(self, "act_hint"):
