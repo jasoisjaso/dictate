@@ -111,13 +111,29 @@ def parse(text: str) -> Command | None:
     if m:
         return Command("replace", old=m.group(1), new=m.group(2))
 
-    # Bosnian voice commands
-    if t in ("obriši to", "obrisi to", "poništi"):
+    # Bosnian voice commands (ijekavian: posljednju, riječ, zamijeni)
+    if t in ("obriši to", "poništi to", "poništi"):
         return Command("scratch")
-    if t in ("obriši reč", "obriši poslednju reč", "obrisi rec", "obrisi poslednju rec"):
+    if t in ("obriši posljednju riječ", "obriši riječ",
+             "obriši posljednju riječ"):
         return Command("delete_words", n=1)
-    if t in ("obriši rečenicu", "obrisi recenicu", "obriši poslednju rečenicu"):
+    if t in ("obriši posljednju rečenicu", "obriši rečenicu"):
         return Command("delete_sentence")
+    if t in ("obriši posljednje dvije riječi",):
+        return Command("delete_words", n=2)
+    if t in ("obriši posljednje tri riječi",):
+        return Command("delete_words", n=3)
+    # Bosnian formatting commands
+    if t in ("podebljaj", "podebljaj to"):
+        return Command("format", mode="bold")
+    if t in ("iskosi", "iskosi to", "kurziv"):
+        return Command("format", mode="italic")
+    if t in ("označi sve", "oznaci sve"):
+        return Command("format", mode="select_all")
+    # Bosnian replace: "zamijeni X sa Y" or "zamijeni X sa y"
+    m = re.fullmatch(r"zamijeni (.+?) sa (.+)", t)
+    if m:
+        return Command("replace", old=m.group(1), new=m.group(2))
 
     return None
 

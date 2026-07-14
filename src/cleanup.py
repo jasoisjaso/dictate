@@ -9,7 +9,12 @@ import urllib.request
 
 log = logging.getLogger("dictate.cleanup")
 
-FILLERS = ["um", "uh", "erm", "uhh", "umm", "er", "ah"]
+FILLERS = [
+    # English
+    "um", "uh", "erm", "uhh", "umm", "er", "ah",
+    # Bosnian (conversational fillers)
+    "e", "ono", "znaci", "dakle", "pa", "vale", "ajde", "ma",
+]
 
 # Phrases faster-whisper/Whisper confidently emits on silence or near-silent
 # audio (the infamous "no speech -> subscribe" hallucinations). If the WHOLE

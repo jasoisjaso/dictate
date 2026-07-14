@@ -259,9 +259,15 @@ class GuideDialog(QDialog):
                      "&nbsp;&nbsp;• <b>\"capitalize that\"</b> / <b>\"all caps that\"</b> / "
                      "<b>\"lowercase that\"</b><br>"
                      "&nbsp;&nbsp;• <b>\"bold that\"</b> / <b>\"italic that\"</b> — markdown formatting<br>"
-                     "&nbsp;&nbsp;• <b>\"redo verbatim\"</b> — re-inject raw words without cleanup<br><br>"
+                     "&nbsp;&nbsp;• <b>\"redo verbatim\"</b> — re-inject raw words without cleanup<br>"
+                     "&nbsp;&nbsp;• <b>\"replace X with Y\"</b> — find-and-replace in the last dictation<br><br>"
                      "Say punctuation too: \"period\", \"comma\", \"question mark\", "
-                     "\"new line\", \"new paragraph\", \"bullet point\"."},
+                     "\"new line\", \"new paragraph\", \"bullet point\".<br><br>"
+                     "<b>Bosnian:</b> \"obriši to\", \"obriši posljednju riječ\", "
+                     "\"obriši posljednju rečenicu\", \"podebljaj\", \"iskosi\", "
+                     "\"označi sve\", \"zamijeni X sa Y\".<br>"
+                     "Punctuation: \"tačka\", \"zarez\", \"upitnik\", \"uzvičnik\", "
+                     "\"novi red\", \"novi pasus\"."},
             {"kind": "modes", "title": "Switch modes on the fly",
              "body": f"Press <b>F7</b> to cycle between modes:<br><br>"
                      "&nbsp;&nbsp;• <b>Auto</b> — detects the app (terminal = verbatim, chat = casual)<br>"

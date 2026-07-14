@@ -151,20 +151,56 @@ def test_replace_not_triggered_by_prose():
     assert vc.parse("please replace the battery") is None
 
 
-# ---- Bosnian voice commands ----------------------------------------------
+# ---- Bosnian voice commands (ijekavian) --------------------------------
 
 def test_bosnian_scratch():
-    for s in ["obriši to", "obrisi to", "poništi"]:
+    for s in ["obriši to", "poništi to", "poništi"]:
         cmd = vc.parse(s)
         assert cmd is not None
         assert cmd.kind == "scratch"
 
 def test_bosnian_delete_word():
-    cmd = vc.parse("obriši reč")
+    cmd = vc.parse("obriši posljednju riječ")
     assert cmd is not None
     assert cmd.kind == "delete_words"
+    assert cmd.n == 1
+
+def test_bosnian_delete_two_words():
+    cmd = vc.parse("obriši posljednje dvije riječi")
+    assert cmd is not None
+    assert cmd.kind == "delete_words"
+    assert cmd.n == 2
 
 def test_bosnian_delete_sentence():
-    cmd = vc.parse("obriši rečenicu")
+    cmd = vc.parse("obriši posljednju rečenicu")
     assert cmd is not None
     assert cmd.kind == "delete_sentence"
+
+def test_bosnian_bold():
+    cmd = vc.parse("podebljaj")
+    assert cmd is not None
+    assert cmd.kind == "format"
+    assert cmd.mode == "bold"
+
+def test_bosnian_italic():
+    cmd = vc.parse("iskosi")
+    assert cmd is not None
+    assert cmd.kind == "format"
+    assert cmd.mode == "italic"
+
+def test_bosnian_select_all():
+    cmd = vc.parse("označi sve")
+    assert cmd is not None
+    assert cmd.kind == "format"
+    assert cmd.mode == "select_all"
+
+def test_bosnian_replace():
+    cmd = vc.parse("zamijeni hello sa hi")
+    assert cmd is not None
+    assert cmd.kind == "replace"
+    assert cmd.old == "hello"
+    assert cmd.new == "hi"
+
+def test_bosnian_serbian_not_confused():
+    # Serbian ekavian forms should NOT trigger (poslednju = Serbian, posljednju = Bosnian)
+    assert vc.parse("obriši poslednju reč") is None  # Serbian ekavian

@@ -40,6 +40,7 @@ person can actually use.
   - **"capitalize that"** / **"all caps that"** / **"lowercase that"**
   - **"redo verbatim"** — re-inject the raw words without cleanup (if the
     post-processing mangled something)
+  - **"replace X with Y"** — find-and-replace in the last dictation
 - **Switch modes on the fly** — press **F7** to cycle:
   - **Auto** — detects the app (terminal = verbatim, chat = casual)
   - **Prose** — full cleanup, sentence casing (default)
@@ -47,6 +48,8 @@ person can actually use.
   - **Email** — professional tone
 - **Copy last dictation** — press **F8** to copy the last result to the
   clipboard. The rescue hatch when text lands in the wrong window.
+- **Re-record last** — press **F6** to delete the last dictation and
+  immediately start recording again. One-button rescue for bad takes.
 - After each dictation a brief toast shows the **word count + undo hint**,
   so you always know it landed and can take it back.
 - Tray icon colours: green = ready, red = recording, blue = transcribing.
@@ -96,7 +99,11 @@ person can actually use.
 - **Model** — Auto picks the best for your hardware. Manual choices from
   tiny (fast, rough) to large-v3 (slow, most accurate).
 - **Language** — English by default; set your language or Auto-detect.
-  Whisper speaks ~99 languages.
+  Whisper speaks ~99 languages. Full **Bosnian** support including spoken
+  punctuation (tačka, zarez, upitnik, uzvičnik, novi red, novi pasus) and
+  voice commands (obriši to, obriši posljednju riječ, podebljaj, iskosi,
+  označi sve, zamijeni X sa Y). Bosnian filler words (e, ono, znači, dakle,
+  pa, vale, ajde, ma) are stripped automatically.
 - **Make me sound good** — filler-word removal ("um", "uh"), plus **My
   words**: teach it names and jargon ("woolies" → "Woolworths") and it will
   both spell them correctly and expand them as you speak.

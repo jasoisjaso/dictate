@@ -24,18 +24,20 @@ PUNCTUATION_LEXICON = [
     ("period", "."),
     ("comma", ","),
     ("colon", ":"),
-    # Bosnian/Croatian/Serbian spoken punctuation
+    # Bosnian/Croatian/Serbian spoken punctuation (Bosnian ijekavian)
     ("tačka", "."),
     ("zarez", ","),
     ("upitnik", "?"),
     ("uzvičnik", "!"),
-    ("tačka zarez", ";"),
+    ("tačka-zarez", ";"),
     ("dvotačka", ":"),
+    ("trotačka", "…"),
     ("novi red", "\n"),
     ("novi pasus", "\n\n"),
     ("otvorena zagrada", "("),
     ("zatvorena zagrada", ")"),
-    ("navodnik", '"'),
+    ("navodnici", '"'),
+    ("crta", "—"),
 ]
 
 _NO_SPACE_BEFORE = ".,?!:;)"
