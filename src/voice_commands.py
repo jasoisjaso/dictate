@@ -92,6 +92,16 @@ def parse(text: str) -> Command | None:
              "delete last line", "remove last line"):
         return Command("delete_sentence")
 
+    if t in ("undo that", "undo last", "undo"):
+        return Command("scratch")
+
+    if t in ("bold that", "bold last", "bolden that"):
+        return Command("format", mode="bold")
+    if t in ("italic that", "italics that", "italicize that", "italicise that"):
+        return Command("format", mode="italic")
+    if t in ("select all", "select everything"):
+        return Command("format", mode="select_all")
+
     return None
 
 

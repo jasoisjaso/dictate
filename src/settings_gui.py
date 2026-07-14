@@ -208,9 +208,15 @@ class SettingsDialog(QDialog):
         g_clean = QGroupBox("Make me sound good")
         v = QVBoxLayout(g_clean)
         cl = cfg.get("cleanup", {})
-        self.chk_fillers = QCheckBox('Remove filler words ("um", "uh", …)')
+        self.chk_fillers = QCheckBox('Remove filler words ("um", "uh", ...)')
         self.chk_fillers.setChecked(bool(cl.get("remove_fillers", True)))
         v.addWidget(self.chk_fillers)
+        self.chk_auto_punct = QCheckBox("Auto-punctuation (add periods + capitalise automatically)")
+        self.chk_auto_punct.setChecked(bool(cfg.get("post_processing", {}).get("auto_punctuation", False)))
+        v.addWidget(self.chk_auto_punct)
+        self.chk_persist_history = QCheckBox("Save dictation history to disk (off by default for privacy)")
+        self.chk_persist_history.setChecked(bool(cfg.get("history", {}).get("persist", False)))
+        v.addWidget(self.chk_persist_history)
         v.addWidget(QLabel("Extra filler words to strip "
                            "(comma-separated, e.g. like, you know, basically):"))
         _extra = cl.get("custom_fillers", []) or []
@@ -356,6 +362,12 @@ class SettingsDialog(QDialog):
                 "remove_fillers": self.chk_fillers.isChecked(),
                 "custom_fillers": [w for w in (
                     p.strip() for p in self.ed_fillers.text().split(",")) if w],
+            },
+            "post_processing": {
+                "auto_punctuation": self.chk_auto_punct.isChecked(),
+            },
+            "history": {
+                "persist": self.chk_persist_history.isChecked(),
             },
             "dictionary": {},
         }

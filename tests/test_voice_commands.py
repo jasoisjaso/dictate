@@ -95,3 +95,37 @@ def test_delete_sentence_variants():
 def test_delete_sentence_not_triggered_by_prose():
     assert vc.parse("delete that sentence from the document") is None
     assert vc.parse("the last sentence was important") is None
+
+
+# ---- undo alias + format commands ---------------------------------------
+
+def test_undo_alias():
+    assert vc.parse("undo that") == vc.Command("scratch")
+    assert vc.parse("undo") == vc.Command("scratch")
+    assert vc.parse("undo last") == vc.Command("scratch")
+
+
+def test_bold_command():
+    cmd = vc.parse("bold that")
+    assert cmd is not None
+    assert cmd.kind == "format"
+    assert cmd.mode == "bold"
+
+
+def test_italic_command():
+    cmd = vc.parse("italic that")
+    assert cmd is not None
+    assert cmd.kind == "format"
+    assert cmd.mode == "italic"
+
+
+def test_select_all_command():
+    cmd = vc.parse("select all")
+    assert cmd is not None
+    assert cmd.kind == "format"
+    assert cmd.mode == "select_all"
+
+
+def test_format_not_triggered_by_prose():
+    assert vc.parse("make that bold please") is None
+    assert vc.parse("the bold text is important") is None

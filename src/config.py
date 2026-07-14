@@ -169,3 +169,19 @@ def _fmt(v) -> str:
     if isinstance(v, (list, tuple)):
         return "[" + ", ".join(_fmt(x) for x in v) + "]"
     return '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def export_config(path: str):
+    """Export the current user settings to a JSON file."""
+    import json
+    cfg = _read(paths.config_path())
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+
+
+def import_config(path: str):
+    """Import settings from a JSON file, replacing current user settings."""
+    import json
+    with open(path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    save(cfg, merge=False)

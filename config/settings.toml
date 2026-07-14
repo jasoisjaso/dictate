@@ -27,10 +27,26 @@ toggle_key = "f9"                # used only when mode = "toggle"
 abort_key = "esc"                # cancel while recording (ignored otherwise)
 copy_key = "f8"                  # copy last dictation to clipboard (rescue when text lands wrong)
 mode_cycle_key = "f7"            # cycle dictation modes: auto -> prose -> code -> email -> auto
+pause_key = "pause"              # pause/resume recording without stopping (Pause key)
+
+# ---- regex transforms (find-replace on transcripts) -----------------------
+# [[transforms]]
+# find = "gonna"
+# replace = "going to"
+# [[transforms]]
+# find = "\\bwanna\\b"
+# replace = "want to"
+
+# ---- history ---------------------------------------------------------------
+[history]
+persist = false                  # save dictation history to disk (off by default for privacy)
+limit = 100                      # max entries when persisted (session limit stays at 25)
 
 [post_processing]
 casing = "sentence"              # sentence | upper | lower | off
 strip_trailing_period_short = true
+auto_punctuation = false         # automatically add periods + capitalise
+                                 # (no need to say "period" — like Wispr Flow)
 
 [cleanup]
 remove_fillers = true            # strip "um", "uh", "erm", ...

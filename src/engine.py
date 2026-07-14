@@ -83,14 +83,16 @@ class WhisperTranscriber:
         self.vad_onset = float(cfg.get("vad", {}).get("onset_threshold", 0.5))
         pp = cfg.get("post_processing", {})
         self.casing = pp.get("casing", "sentence")
+        self.auto_punctuation = bool(pp.get("auto_punctuation", False))
         self.strip_short = bool(pp.get("strip_trailing_period_short",
                                        pp.get("strip", True)))
+        self.transforms = cfg.get("transforms", []) or []
         self._model = None
         self._lock = threading.Lock()
         self.active_device = None
 
     def load(self):
-        """Load the model (slow, do it on a background thread at startup)."""
+        """Load the model and warm it up with a dummy transcription."""
         with self._lock:
             if self._model is not None:
                 return
@@ -103,38 +105,56 @@ class WhisperTranscriber:
             try:
                 self._model = WhisperModel(
                     self.model_size, device=self.device,
-                    compute_type=self.compute_type, **kw)
+                    compute_type=self.compute_type, num_workers=1, **kw)
                 self.active_device = self.device
             except Exception as ex:
                 log.warning("device %r/%s failed (%s); falling back to CPU int8",
                             self.device, self.compute_type, ex)
                 self.device, self.compute_type = "cpu", "int8"
                 self._model = WhisperModel(
-                    self.model_size, device="cpu", compute_type="int8", **kw)
+                    self.model_size, device="cpu", compute_type="int8",
+                    num_workers=1, **kw)
                 self.active_device = "cpu"
             log.info("model %s loaded on %s", self.model_size, self.active_device)
+        # Warm up: run a 1s dummy transcription so CUDA kernels are compiled
+        # and memory is pre-allocated. First real dictation will be instant.
+        try:
+            dummy = np.zeros(16000, dtype=np.float32)
+            self._model.transcribe(dummy, without_timestamps=True,
+                                   beam_size=1, vad_filter=False,
+                                   condition_on_previous_text=False)
+            log.info("model warmed up")
+        except Exception as ex:
+            log.debug("warmup failed (non-critical): %s", ex)
+
+    def _adaptive_beam_size(self, audio_data: np.ndarray) -> int:
+        """Short takes don't need beam_size=5 — beam_size=1 is 2-3x faster
+        with negligible accuracy loss for a single sentence."""
+        duration = audio_data.size / 16000
+        if duration < 5.0:
+            return 1
+        if duration < 15.0:
+            return 3
+        return self.beam_size
 
     def transcribe_audio_buffer(self, audio_data: np.ndarray) -> str:
         """Raw transcription of a float32 mono 16 kHz buffer."""
         if audio_data.size < 1600:  # under 0.1 s — nothing to do
             return ""
         self.load()
+        beam = self._adaptive_beam_size(audio_data)
         with self._lock:
             segments, _info = self._model.transcribe(
                 audio_data,
                 language=self.language,
                 task="transcribe",
-                beam_size=self.beam_size,
+                beam_size=beam,
                 initial_prompt=self.initial_prompt,
                 vad_filter=self.vad_enabled,
                 condition_on_previous_text=False,
+                without_timestamps=True,
             )
             text = " ".join(s.text.strip() for s in segments).strip()
-            # Safety net for real dictation that came back empty: the VAD filter
-            # can occasionally strip a whole take (quiet mic, breathy speech),
-            # which is exactly the "I spoke a paragraph and nothing appeared"
-            # failure. On a substantial take (> ~2s) with an empty result, retry
-            # once WITHOUT the VAD filter so we don't silently drop real speech.
             if not text and self.vad_enabled and audio_data.size > 16000 * 2:
                 log.info("empty result with VAD on a %.1fs take — retrying "
                          "without VAD filter", audio_data.size / 16000)
@@ -142,10 +162,11 @@ class WhisperTranscriber:
                     audio_data,
                     language=self.language,
                     task="transcribe",
-                    beam_size=self.beam_size,
+                    beam_size=beam,
                     initial_prompt=self.initial_prompt,
                     vad_filter=False,
                     condition_on_previous_text=False,
+                    without_timestamps=True,
                 )
                 text = " ".join(s.text.strip() for s in segments).strip()
         # Guard against Whisper's classic silence hallucinations ("Thank you.",
@@ -204,12 +225,26 @@ class WhisperTranscriber:
         text = _cleanup.clean(text, remove_fillers=self.remove_fillers,
                               dictionary=self.dictionary,
                               filler_re=self.filler_re)
+        # Apply user-defined regex transforms (e.g. "gonna" -> "going to")
+        if self.transforms and not verbatim:
+            try:
+                from . import transforms as _t
+            except ImportError:
+                import transforms as _t
+            text = _t.apply_transforms(text, self.transforms)
         if self.ollama_polish:
             text = _cleanup.ollama_polish(
                 text, self.ollama_model, self.ollama_endpoint,
                 tone=profile.get("tone"))
         text = self._fix_spacing(text)
         text = self._apply_casing(text)
+        # Auto-punctuation: add trailing period + capitalise if enabled
+        if self.auto_punctuation:
+            try:
+                from . import auto_punct
+            except ImportError:
+                import auto_punct
+            text = auto_punct.add_punctuation(text)
         words = re.findall(r"[\w']+", text)
         if self.strip_short and len(words) < 3:
             text = text.rstrip(".")

@@ -11,6 +11,7 @@ Trigger models (config [hotkeys].mode):
 """
 
 import logging
+import os
 import re
 import threading
 import time
@@ -156,7 +157,13 @@ class DictationTrayApp(QObject):
         self.paste_threshold = int(inj.get("paste_threshold", 300))
         self.sounds = bool(cfg.get("feedback", {}).get("sounds", True))
         self.live_preview = bool(cfg.get("preview", {}).get("live_preview", True))
-        self.history = History(limit=25)
+        persist_history = bool(cfg.get("history", {}).get("persist", False))
+        from . import paths as _paths
+        self.history = History(
+            limit=25,
+            persist_path=(os.path.join(_paths.app_data_dir(), "history.json")
+                          if persist_history else None)
+        )
         self.app_profiles = dict(appcontext.DEFAULT_PROFILES)
         self.app_profiles.update(cfg.get("app_profiles", {}))
         self._rec_app = None
@@ -170,6 +177,7 @@ class DictationTrayApp(QObject):
         self.abort_name = hk.get("abort_key", "esc")
         self.copy_name = hk.get("copy_key", "f8")
         self.mode_cycle_name = hk.get("mode_cycle_key", "f7")
+        self.pause_name = hk.get("pause_key", "pause")
 
         self.tray = QSystemTrayIcon(_make_icon(STATE_COLOR[LOADING]))
         self._build_menu()
@@ -265,6 +273,17 @@ class DictationTrayApp(QObject):
             self.act_mode.setText(
                 f"Mode: {label}  ({_pretty_key(self.mode_cycle_name)} to cycle)")
         self.overlay.flash_toast(f"Mode: {label}")
+
+    def _toggle_pause(self):
+        """Pause/resume recording without stopping the take."""
+        if self.state != RECORDING:
+            return
+        if self.recorder.paused:
+            self.recorder.resume()
+            self.overlay.flash_toast("resumed")
+        else:
+            self.recorder.pause()
+            self.overlay.flash_toast("paused")
 
     def _copy_last(self):
         """Copy the most recent dictation to the clipboard — the fast rescue
@@ -379,14 +398,15 @@ class DictationTrayApp(QObject):
         self._abort_key = _parse_key(self.abort_name)
         self._copy_key = _parse_key(self.copy_name)
         self._mode_cycle_key = _parse_key(self.mode_cycle_name)
+        self._pause_key = _parse_key(self.pause_name)
         self._ptt_down = False
         self._listener = keyboard.Listener(
             on_press=self._on_press, on_release=self._on_release)
         self._listener.daemon = True
         self._listener.start()
-        log.info("hotkeys: mode=%s ptt=%s toggle=%s abort=%s copy=%s mode_cycle=%s",
+        log.info("hotkeys: mode=%s ptt=%s toggle=%s abort=%s copy=%s mode_cycle=%s pause=%s",
                  self.mode, self.ptt_name, self.toggle_name, self.abort_name,
-                 self.copy_name, self.mode_cycle_name)
+                 self.copy_name, self.mode_cycle_name, self.pause_name)
 
     @staticmethod
     def _key_matches(key, target) -> bool:
@@ -418,6 +438,9 @@ class DictationTrayApp(QObject):
                 return
             if self._key_matches(key, self._mode_cycle_key):
                 self._sig_mode_cycle.emit()
+                return
+            if self._key_matches(key, self._pause_key):
+                self._toggle_pause()
                 return
         except Exception:
             log.exception("hotkey on_press error")
@@ -594,18 +617,23 @@ class DictationTrayApp(QObject):
 
     # push-to-talk
     def _on_ptt_start(self):
+        self._continuous_stop = False
         self._begin_recording()
 
     def _on_ptt_stop(self):
+        if self.mode == "continuous":
+            self._continuous_stop = True
         self._stop_and_transcribe()
 
     # toggle / hands-free
     def _on_toggle(self):
         if self.state == IDLE:
+            self._continuous_stop = False
             if self._begin_recording() and self.silence_timeout > 0:
                 self._monitor_stop.clear()
                 threading.Thread(target=self._silence_monitor, daemon=True).start()
         elif self.state == RECORDING:
+            self._continuous_stop = True
             self._stop_and_transcribe()
 
     def _on_abort(self):
@@ -665,6 +693,10 @@ class DictationTrayApp(QObject):
             undo_hint = "Ctrl+Z to undo"
         self.overlay.flash_toast(
             f"{n_words} word{'s' if n_words != 1 else ''} · {undo_hint}")
+        # Continuous mode: auto-restart recording after a brief pause
+        if self.mode == "continuous" and not getattr(self, "_continuous_stop", False):
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(800, self._begin_recording)
 
     def _run_voice_command(self, cmd):
         """Execute a parsed voice-edit command against the last injection."""
@@ -751,6 +783,40 @@ class DictationTrayApp(QObject):
                 self.last_injected_text = text[:len(text) - to_delete]
                 self.last_injected_len = len(self.last_injected_text)
             self.overlay.flash_toast("deleted last sentence")
+            return
+        if cmd.kind == "format":
+            if cmd.mode == "select_all":
+                # Ctrl+A — select all text in the current field
+                win32_input._send_inputs([
+                    win32_input._vk_event(win32_input.VK_CONTROL),
+                    win32_input._vk_event(0x41),  # 'A'
+                    win32_input._vk_event(0x41, win32_input.KEYEVENTF_KEYUP),
+                    win32_input._vk_event(win32_input.VK_CONTROL, win32_input.KEYEVENTF_KEYUP),
+                ])
+                self.overlay.flash_toast("selected all")
+                return
+            old = self.last_injected_text
+            if not old.strip():
+                self.overlay.flash_toast("nothing to format")
+                return
+            trailing = old[len(old.rstrip()):]
+            stripped = old.rstrip()
+            if cmd.mode == "bold":
+                new = f"**{stripped}**" + trailing
+            elif cmd.mode == "italic":
+                new = f"*{stripped}*" + trailing
+            else:
+                return
+            win32_input.inject_backspaces(len(old))
+            how = win32_input.choose_injection(new, mode=self.inject_mode,
+                                               paste_threshold=self.paste_threshold)
+            if how == "paste":
+                win32_input.inject_text_via_paste(new)
+            else:
+                win32_input.inject_text_native_unicode(new)
+            self.last_injected_text = new
+            self.last_injected_len = len(new)
+            self.overlay.flash_toast(cmd.mode)
             return
 
     def _on_error(self, msg: str):

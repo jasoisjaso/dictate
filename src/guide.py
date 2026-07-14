@@ -253,11 +253,12 @@ class GuideDialog(QDialog):
                      "&nbsp;&nbsp;🔵 <b>Blue</b> — thinking (turning speech into text)"},
             {"kind": "command", "title": "Fix it by voice",
              "body": "You don't need the keyboard to correct things:<br><br>"
-                     "&nbsp;&nbsp;• <b>\"scratch that\"</b> — delete the whole last bit<br>"
+                     "&nbsp;&nbsp;• <b>\"scratch that\"</b> / <b>\"undo that\"</b> — delete the whole last bit<br>"
                      "&nbsp;&nbsp;• <b>\"delete last word\"</b> (or \"…last three words\")<br>"
                      "&nbsp;&nbsp;• <b>\"delete last sentence\"</b> — delete from the last period to here<br>"
                      "&nbsp;&nbsp;• <b>\"capitalize that\"</b> / <b>\"all caps that\"</b> / "
                      "<b>\"lowercase that\"</b><br>"
+                     "&nbsp;&nbsp;• <b>\"bold that\"</b> / <b>\"italic that\"</b> — markdown formatting<br>"
                      "&nbsp;&nbsp;• <b>\"redo verbatim\"</b> — re-inject raw words without cleanup<br><br>"
                      "Say punctuation too: \"period\", \"comma\", \"question mark\", "
                      "\"new line\", \"new paragraph\", \"bullet point\"."},

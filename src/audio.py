@@ -40,6 +40,7 @@ class AudioRecorder:
         self._chunks: list[np.ndarray] = []
         self._sample_count = 0
         self._capped = False
+        self._paused = False
         self._lock = threading.Lock()
         self._active = False
         self._stream = None
@@ -52,6 +53,18 @@ class AudioRecorder:
     def capped(self) -> bool:
         """True once a single take hit the max-duration cap (UI auto-stops)."""
         return self._capped
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    def pause(self):
+        """Pause recording — mic stays open but audio is not captured."""
+        self._paused = True
+
+    def resume(self):
+        """Resume recording after a pause."""
+        self._paused = False
 
     @property
     def duration(self) -> float:
@@ -73,11 +86,9 @@ class AudioRecorder:
     def _callback(self, indata, frames, time_info, status):
         if status:
             log.debug("audio status: %s", status)
-        if self._active:
+        if self._active and not self._paused:
             with self._lock:
                 if self._sample_count >= self.max_samples:
-                    # hard cap reached: stop retaining audio, flag for auto-stop.
-                    # Keep the callback cheap — no logging/allocation here.
                     self._capped = True
                     return
                 self._chunks.append(indata[:, 0].copy())
