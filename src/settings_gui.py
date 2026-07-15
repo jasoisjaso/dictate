@@ -106,54 +106,60 @@ class SettingsDialog(QDialog):
         self.cfg = cfg
         self.setWindowTitle("Dictate — Settings" if not first_run
                             else "Welcome to Dictate")
-        self.setMinimumWidth(520)
-        self.setMinimumHeight(500)
-        # Outer layout: scroll area fills the middle, buttons pinned at bottom
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        self.setMinimumWidth(480)
+        self.setMinimumHeight(360)
+        # Cap to 90% of screen so it always fits
+        from PySide6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen()
+        if screen:
+            g = screen.availableGeometry()
+            self.setMaximumWidth(g.width())
+            self.setMaximumHeight(g.height())
 
-        # Scroll area wrapping all the settings content
-        from PySide6.QtWidgets import QScrollArea
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.NoFrame)
-        scroll_content = QWidget()
-        root = QVBoxLayout(scroll_content)
-        scroll.setWidget(scroll_content)
-        outer.addWidget(scroll)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(6)
 
         if first_run:
             intro = QLabel(
                 "<b>Dictate turns your voice into text in any app.</b><br>"
-                "Check these few settings once and you're done — "
-                "everything runs on this PC, nothing goes to the cloud.")
+                "Check these few settings once and you're done.")
             intro.setWordWrap(True)
-            root.addWidget(intro)
+            outer.addWidget(intro)
 
-        # --- Trigger -----------------------------------------------------
+        # Tabbed layout — 3 compact tabs instead of one long page
+        from PySide6.QtWidgets import QTabWidget
+        self.tabs = QTabWidget()
+        outer.addWidget(self.tabs)
+
+        # ═══════════════ TAB 1: Talking ═══════════════
+        tab1 = QWidget()
+        v1 = QVBoxLayout(tab1)
+        v1.setContentsMargins(6, 6, 6, 6)
+
+        # Trigger
         g_trig = QGroupBox("How you talk to it")
         f = QFormLayout(g_trig)
-        self.rb_ptt = QRadioButton("Hold a key while talking (recommended)")
-        self.rb_toggle = QRadioButton("Tap once to start, tap again (or go quiet) to stop")
+        self.rb_ptt = QRadioButton("Hold a key (recommended)")
+        self.rb_toggle = QRadioButton("Tap to start / tap to stop")
         hk = cfg.get("hotkeys", {})
         (self.rb_ptt if hk.get("mode", "push_to_talk") == "push_to_talk"
          else self.rb_toggle).setChecked(True)
         f.addRow(self.rb_ptt)
         f.addRow(self.rb_toggle)
         self.btn_ptt = KeyCaptureButton(hk.get("push_to_talk_key", "ctrl_r"))
+        f.addRow("Talk key:", self.btn_ptt)
         self.btn_toggle = KeyCaptureButton(hk.get("toggle_key", "f9"))
-        f.addRow("Hold-to-talk key:", self.btn_ptt)
-        f.addRow("Tap-to-talk key:", self.btn_toggle)
+        f.addRow("Tap key:", self.btn_toggle)
         self.btn_copy = KeyCaptureButton(hk.get("copy_key", "f8"))
-        f.addRow("Copy last dictation key:", self.btn_copy)
+        f.addRow("Copy last key:", self.btn_copy)
         self.btn_mode = KeyCaptureButton(hk.get("mode_cycle_key", "f7"))
         f.addRow("Cycle modes key:", self.btn_mode)
         self.btn_rerecord = KeyCaptureButton(hk.get("rerecord_key", "f6"))
-        f.addRow("Re-record last key:", self.btn_rerecord)
-        root.addWidget(g_trig)
+        f.addRow("Re-record key:", self.btn_rerecord)
+        v1.addWidget(g_trig)
 
-        # --- Microphone ----------------------------------------------------
+        # Microphone
         g_mic = QGroupBox("Microphone")
         f = QFormLayout(g_mic)
         self.cb_mic = QComboBox()
@@ -169,10 +175,16 @@ class SettingsDialog(QDialog):
             pos = self.cb_mic.findData(want)
             if pos >= 0:
                 self.cb_mic.setCurrentIndex(pos)
-        f.addRow("Use microphone:", self.cb_mic)
-        root.addWidget(g_mic)
+        f.addRow("Mic:", self.cb_mic)
+        v1.addWidget(g_mic)
+        v1.addStretch(1)
+        self.tabs.addTab(tab1, "Talking")
 
-        # --- Model ---------------------------------------------------------
+        # ═══════════════ TAB 2: Recognition ═══════════════
+        tab2 = QWidget()
+        v2 = QVBoxLayout(tab2)
+        v2.setContentsMargins(6, 6, 6, 6)
+
         g_model = QGroupBox("Speech recognition")
         f = QFormLayout(g_model)
         self.cb_model = QComboBox()
@@ -188,15 +200,15 @@ class SettingsDialog(QDialog):
             except ImportError:
                 import device as _device
             tier = _device.detect()
-            hint = (f"Auto on this PC = {tier.model_size} on {tier.device}"
+            hint = (f"Auto = {tier.model_size} on {tier.device}"
                     f" ({tier.compute_type})")
             if getattr(tier, "amd_gpu", False):
-                hint += "\nAMD GPU detected — using CPU. DirectML GPU acceleration is on the roadmap."
+                hint += "\nAMD GPU — using CPU. DirectML planned."
         except Exception:
             hint = ""
         if hint:
             lbl = QLabel(hint)
-            lbl.setStyleSheet("color: gray")
+            lbl.setStyleSheet("color: gray; font-size: 11px;")
             lbl.setWordWrap(True)
             f.addRow("", lbl)
         self.cb_lang = QComboBox()
@@ -206,64 +218,22 @@ class SettingsDialog(QDialog):
         pos = self.cb_lang.findData(cur)
         self.cb_lang.setCurrentIndex(pos if pos >= 0 else 0)
         f.addRow("Language:", self.cb_lang)
-        root.addWidget(g_model)
+        v2.addWidget(g_model)
 
-        # --- Visualizer -------------------------------------------------------
+        # Visualizer
         g_vis = QGroupBox("Visualizer")
         f = QFormLayout(g_vis)
         self.cb_vis = QComboBox()
-        self.cb_vis.addItem("Equalizer — clean grey bars", "equalizer")
-        self.cb_vis.addItem("Blob — colour-shifting orb (reacts to pitch & volume)", "blob")
+        self.cb_vis.addItem("Equalizer — grey bars", "equalizer")
+        self.cb_vis.addItem("Blob — colour orb", "blob")
         cur_vis = cfg.get("overlay", {}).get("style", "equalizer")
         pos = self.cb_vis.findData(cur_vis)
         self.cb_vis.setCurrentIndex(pos if pos >= 0 else 0)
         f.addRow("Style:", self.cb_vis)
-        root.addWidget(g_vis)
+        v2.addWidget(g_vis)
 
-        # --- Cleanup + dictionary -------------------------------------------
-        g_clean = QGroupBox("Make me sound good")
-        v = QVBoxLayout(g_clean)
-        cl = cfg.get("cleanup", {})
-        self.chk_fillers = QCheckBox('Remove filler words ("um", "uh", ...)')
-        self.chk_fillers.setChecked(bool(cl.get("remove_fillers", True)))
-        v.addWidget(self.chk_fillers)
-        self.chk_auto_punct = QCheckBox("Auto-punctuation (add periods + capitalise automatically)")
-        self.chk_auto_punct.setChecked(bool(cfg.get("post_processing", {}).get("auto_punctuation", False)))
-        v.addWidget(self.chk_auto_punct)
-        self.chk_persist_history = QCheckBox("Save dictation history to disk (off by default for privacy)")
-        self.chk_persist_history.setChecked(bool(cfg.get("history", {}).get("persist", False)))
-        v.addWidget(self.chk_persist_history)
-        v.addWidget(QLabel("Extra filler words to strip "
-                           "(comma-separated, e.g. like, you know, basically):"))
-        _extra = cl.get("custom_fillers", []) or []
-        if isinstance(_extra, str):
-            _extra = [p.strip() for p in _extra.split(",")]
-        self.ed_fillers = QLineEdit(", ".join(str(x).strip()
-                                              for x in _extra if str(x).strip()))
-        self.ed_fillers.setPlaceholderText("like, you know, basically, actually")
-        v.addWidget(self.ed_fillers)
-        v.addWidget(QLabel("My words (teach it names and jargon):"))
-        self.tbl = QTableWidget(0, 2)
-        self.tbl.setHorizontalHeaderLabels(["When I say…", "Type this"])
-        self.tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.tbl.verticalHeader().setVisible(False)
-        self.tbl.setMaximumHeight(140)
-        for k, val in cfg.get("dictionary", {}).items():
-            self._add_row(k, val)
-        row_btns = QHBoxLayout()
-        b_add = QPushButton("Add word")
-        b_add.clicked.connect(lambda: self._add_row("", ""))
-        b_del = QPushButton("Remove selected")
-        b_del.clicked.connect(self._del_row)
-        row_btns.addWidget(b_add)
-        row_btns.addWidget(b_del)
-        row_btns.addStretch(1)
-        v.addWidget(self.tbl)
-        v.addLayout(row_btns)
-        root.addWidget(g_clean)
-
-        # --- Startup ---------------------------------------------------------
-        self.chk_login = QCheckBox("Start Dictate when I log in to Windows")
+        # Startup
+        self.chk_login = QCheckBox("Start Dictate when I log in")
         if platform.system() == "Windows":
             try:
                 from . import startup as _startup
@@ -274,27 +244,75 @@ class SettingsDialog(QDialog):
         else:
             self._startup = None
             self.chk_login.setEnabled(False)
-        root.addWidget(self.chk_login)
+        v2.addWidget(self.chk_login)
+        v2.addStretch(1)
+        self.tabs.addTab(tab2, "Recognition")
 
-        # --- Mic test ---------------------------------------------------------
+        # ═══════════════ TAB 3: Cleanup + Test ═══════════════
+        tab3 = QWidget()
+        v3 = QVBoxLayout(tab3)
+        v3.setContentsMargins(6, 6, 6, 6)
+
+        g_clean = QGroupBox("Make me sound good")
+        v = QVBoxLayout(g_clean)
+        cl = cfg.get("cleanup", {})
+        self.chk_fillers = QCheckBox('Remove filler words ("um", "uh")')
+        self.chk_fillers.setChecked(bool(cl.get("remove_fillers", True)))
+        v.addWidget(self.chk_fillers)
+        self.chk_auto_punct = QCheckBox("Auto-punctuation (add periods + capitalise)")
+        self.chk_auto_punct.setChecked(bool(cfg.get("post_processing", {}).get("auto_punctuation", False)))
+        v.addWidget(self.chk_auto_punct)
+        self.chk_persist_history = QCheckBox("Save history to disk")
+        self.chk_persist_history.setChecked(bool(cfg.get("history", {}).get("persist", False)))
+        v.addWidget(self.chk_persist_history)
+        v.addWidget(QLabel("Extra filler words (comma-separated):"))
+        _extra = cl.get("custom_fillers", []) or []
+        if isinstance(_extra, str):
+            _extra = [p.strip() for p in _extra.split(",")]
+        self.ed_fillers = QLineEdit(", ".join(str(x).strip()
+                                              for x in _extra if str(x).strip()))
+        self.ed_fillers.setPlaceholderText("like, you know, basically")
+        v.addWidget(self.ed_fillers)
+        v.addWidget(QLabel("My words (say X -> type Y):"))
+        self.tbl = QTableWidget(0, 2)
+        self.tbl.setHorizontalHeaderLabels(["When I say...", "Type this"])
+        self.tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.tbl.verticalHeader().setVisible(False)
+        self.tbl.setMaximumHeight(100)
+        for k, val in cfg.get("dictionary", {}).items():
+            self._add_row(k, val)
+        row_btns = QHBoxLayout()
+        b_add = QPushButton("Add word")
+        b_add.clicked.connect(lambda: self._add_row("", ""))
+        b_del = QPushButton("Remove")
+        b_del.clicked.connect(self._del_row)
+        row_btns.addWidget(b_add)
+        row_btns.addWidget(b_del)
+        row_btns.addStretch(1)
+        v.addWidget(self.tbl)
+        v.addLayout(row_btns)
+        v3.addWidget(g_clean)
+
+        # Mic test
         g_test = QGroupBox("Test your setup")
         tv = QVBoxLayout(g_test)
-        tv.addWidget(QLabel("Record 3 seconds of speech and see if it transcribes:"))
+        tv.addWidget(QLabel("Record 3s and see if it transcribes:"))
         row = QHBoxLayout()
-        self.btn_mic_test = QPushButton("Record 3s & transcribe")
+        self.btn_mic_test = QPushButton("Record 3s")
         self.btn_mic_test.clicked.connect(self._run_mic_test)
         row.addWidget(self.btn_mic_test)
         self.lbl_mic_result = QLabel("")
         self.lbl_mic_result.setWordWrap(True)
         self.lbl_mic_result.setStyleSheet(
             "background:#101214; color:#e8eaec; border:1px solid #2a2f34;"
-            "border-radius:6px; padding:10px; min-height:32px;")
+            "border-radius:6px; padding:8px; min-height:28px;")
         row.addWidget(self.lbl_mic_result, 1)
         tv.addLayout(row)
-        root.addWidget(g_test)
-        root.addStretch(1)
+        v3.addWidget(g_test)
+        v3.addStretch(1)
+        self.tabs.addTab(tab3, "Cleanup & Test")
 
-        # --- Buttons (pinned at bottom, outside scroll area) ----------------
+        # --- Buttons (always visible at bottom) ---
         btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         btns.accepted.connect(self._save)
         btns.rejected.connect(self.reject)
