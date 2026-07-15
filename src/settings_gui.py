@@ -331,11 +331,19 @@ class SettingsDialog(QDialog):
 
     def _run_mic_test(self):
         """Record 3 seconds of audio, transcribe, and show the result inline.
-        Uses the main app's already-loaded model via a signal, so we don't
-        try to load a second model instance (which was the bug)."""
+        Uses the main app's already-loaded model. Results are sent back to
+        the GUI thread via a signal — touching Qt widgets from a background
+        thread crashes silently on Windows."""
         self.btn_mic_test.setEnabled(False)
         self.lbl_mic_result.setText("Recording 3s... say something now!")
         mic_idx = self.cb_mic.currentData()
+
+        from PySide6.QtCore import QTimer
+
+        def _set_result(text):
+            """Safely update the label from the GUI thread."""
+            QTimer.singleShot(0, lambda: self.lbl_mic_result.setText(text))
+            QTimer.singleShot(0, lambda: self.btn_mic_test.setEnabled(True))
 
         def _worker():
             try:
@@ -350,36 +358,27 @@ class SettingsDialog(QDialog):
                 audio_data = rec.stop_recording()
                 rec.close()
                 if audio_data.size < 1600:
-                    self.lbl_mic_result.setText("No audio captured — check your mic is plugged in")
+                    _set_result("No audio captured - check your mic is plugged in")
                     return
-                # Use the main app's engine (already loaded) instead of
-                # creating a new one. We access it via QApplication's
-                # top-level widgets — the tray app stores a reference.
                 from PySide6.QtWidgets import QApplication
                 app = QApplication.instance()
                 engine = None
-                # Walk the app's children to find the DictationTrayApp
                 for obj in app.children():
                     if hasattr(obj, "engine") and obj.engine is not None:
                         if hasattr(obj.engine, "_model") and obj.engine._model is not None:
                             engine = obj.engine
                             break
                 if engine is None:
-                    # Fallback: load a standalone engine (model may not be ready yet)
-                    self.lbl_mic_result.setText(
-                        "Model not loaded yet — wait for the green tray icon, then try again")
+                    _set_result("Model not loaded yet - wait for the green tray icon, then try again")
                     return
                 raw = engine.transcribe_audio_buffer(audio_data)
                 text = engine.post_process(raw) if raw else ""
                 if text:
-                    self.lbl_mic_result.setText(f'<b>Heard:</b> "{text}"')
+                    _set_result(f'<b>Heard:</b> "{text}"')
                 else:
-                    self.lbl_mic_result.setText(
-                        "Nothing transcribed — try speaking louder or closer")
+                    _set_result("Nothing transcribed - try speaking louder or closer")
             except Exception as ex:
-                self.lbl_mic_result.setText(f"Error: {ex}")
-            finally:
-                self.btn_mic_test.setEnabled(True)
+                _set_result(f"Error: {ex}")
 
         import threading
         threading.Thread(target=_worker, daemon=True).start()
