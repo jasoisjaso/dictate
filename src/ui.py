@@ -347,10 +347,16 @@ class DictationTrayApp(QObject):
         dlg.exec()
 
     def _open_settings(self, first_run: bool = False):
-        from .settings_gui import SettingsDialog
-        dlg = SettingsDialog(self.cfg, first_run=first_run)
-        dlg.saved.connect(self._apply_settings)
-        dlg.exec()
+        try:
+            from .settings_gui import SettingsDialog
+            dlg = SettingsDialog(self.cfg, first_run=first_run)
+            dlg.saved.connect(self._apply_settings)
+            dlg.exec()
+        except Exception as ex:
+            log.exception("settings dialog failed to open")
+            self.tray.showMessage("Dictate",
+                f"Settings failed to open: {ex}",
+                QSystemTrayIcon.Critical, 8000)
 
     def _apply_settings(self, overlay: dict):
         """Hot-apply everything that doesn't need a model reload."""

@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QRadioButton,
-    QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 log = logging.getLogger("dictate.settings")
