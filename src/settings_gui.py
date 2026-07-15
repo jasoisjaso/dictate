@@ -107,7 +107,21 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Dictate — Settings" if not first_run
                             else "Welcome to Dictate")
         self.setMinimumWidth(520)
-        root = QVBoxLayout(self)
+        self.setMinimumHeight(500)
+        # Outer layout: scroll area fills the middle, buttons pinned at bottom
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Scroll area wrapping all the settings content
+        from PySide6.QtWidgets import QScrollArea
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll_content = QWidget()
+        root = QVBoxLayout(scroll_content)
+        scroll.setWidget(scroll_content)
+        outer.addWidget(scroll)
 
         if first_run:
             intro = QLabel(
@@ -278,12 +292,13 @@ class SettingsDialog(QDialog):
         row.addWidget(self.lbl_mic_result, 1)
         tv.addLayout(row)
         root.addWidget(g_test)
+        root.addStretch(1)
 
-        # --- Buttons -----------------------------------------------------------
+        # --- Buttons (pinned at bottom, outside scroll area) ----------------
         btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         btns.accepted.connect(self._save)
         btns.rejected.connect(self.reject)
-        root.addWidget(btns)
+        outer.addWidget(btns)
 
     def _add_row(self, k: str, v: str):
         r = self.tbl.rowCount()
