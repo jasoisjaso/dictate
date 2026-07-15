@@ -100,6 +100,7 @@ class SettingsDialog(QDialog):
     """cfg is the merged config dict. saved(dict) fires with the new user
     overlay after a successful save so the tray app can hot-apply."""
     saved = Signal(dict)
+    _mic_result_ready = Signal(str)
 
     def __init__(self, cfg: dict, first_run: bool = False, parent=None):
         super().__init__(parent)
@@ -317,6 +318,8 @@ class SettingsDialog(QDialog):
         btns.accepted.connect(self._save)
         btns.rejected.connect(self.reject)
         outer.addWidget(btns)
+        # Wire the mic test result signal
+        self._mic_result_ready.connect(self._mic_test_done)
 
     def _add_row(self, k: str, v: str):
         r = self.tbl.rowCount()
@@ -330,18 +333,11 @@ class SettingsDialog(QDialog):
             self.tbl.removeRow(r)
 
     def _run_mic_test(self):
-        """Record 3 seconds of audio, then ask the main app to transcribe it.
-        We can't call the engine directly from here because:
-        1. The engine has a threading.Lock() that may be held by the main app
-        2. Touching Qt widgets from a background thread crashes on Windows
-        
-        Instead: record in a thread, then use a signal to ask the main
-        DictationTrayApp to transcribe and send the result back."""
+        """Record 3 seconds of audio, then transcribe using the main app's engine.
+        Results are sent via _mic_result_ready signal to the GUI thread."""
         self.btn_mic_test.setEnabled(False)
         self.lbl_mic_result.setText("Recording 3s... say something now!")
         mic_idx = self.cb_mic.currentData()
-
-        from PySide6.QtCore import QTimer
 
         def _worker():
             try:
@@ -356,12 +352,8 @@ class SettingsDialog(QDialog):
                 audio_data = rec.stop_recording()
                 rec.close()
                 if audio_data.size < 1600:
-                    QTimer.singleShot(0, lambda: self._mic_test_done("No audio - check your mic"))
+                    self._mic_result_ready.emit("No audio - check your mic")
                     return
-                # Find the main app's engine and transcribe directly.
-                # The key insight: the engine lock is only held DURING
-                # active transcription. If the app is idle (green icon),
-                # the lock is free and we can use it.
                 from PySide6.QtWidgets import QApplication
                 app = QApplication.instance()
                 tray_app = None
@@ -371,25 +363,19 @@ class SettingsDialog(QDialog):
                             tray_app = obj
                             break
                 if tray_app is None:
-                    QTimer.singleShot(0, lambda: self._mic_test_done(
-                        "Model not loaded - wait for green icon"))
+                    self._mic_result_ready.emit("Model not loaded - wait for green icon")
                     return
-                # Check the app is idle (not recording/transcribing)
                 if hasattr(tray_app, "state") and tray_app.state != "idle":
-                    QTimer.singleShot(0, lambda: self._mic_test_done(
-                        "App is busy - stop recording first"))
+                    self._mic_result_ready.emit("App is busy - stop recording first")
                     return
-                # Transcribe — the lock should be free since app is idle
                 raw = tray_app.engine.transcribe_audio_buffer(audio_data)
                 text = tray_app.engine.post_process(raw) if raw else ""
                 if text:
-                    result = f'<b>Heard:</b> "{text}"'
+                    self._mic_result_ready.emit(f'Heard: "{text}"')
                 else:
-                    result = "Nothing transcribed - speak louder or closer"
-                QTimer.singleShot(0, lambda: self._mic_test_done(result))
+                    self._mic_result_ready.emit("Nothing transcribed - speak louder or closer")
             except Exception as ex:
-                err = f"Error: {ex}"
-                QTimer.singleShot(0, lambda: self._mic_test_done(err))
+                self._mic_result_ready.emit(f"Error: {ex}")
 
         import threading
         threading.Thread(target=_worker, daemon=True).start()
