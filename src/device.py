@@ -95,3 +95,77 @@ def detect() -> Tier:
     log.info("auto device: cuda=%s vram=%.1fGB amd=%s -> %s",
              cuda, vram, amd, tier.as_dict())
     return tier
+
+
+# ---- per-PC feature gating -------------------------------------------------
+# The smart extras (streaming commits, live preview, Ollama polish) each cost
+# compute. They must switch OFF automatically on machines that can't afford
+# them: the app has to stay usable on a 2-core laptop with no GPU, just with
+# fewer luxuries. All checks are cheap and cached by the caller.
+
+def _cpu_cores() -> int:
+    import os
+    return os.cpu_count() or 2
+
+
+def streaming_ok(tier: Tier) -> bool:
+    """Chunked while-you-talk transcription.
+
+    GPU: always fine — chunk commits take a fraction of realtime.
+    CPU: only worth it when the machine has real parallel headroom AND a
+    model small enough that a 14s chunk transcribes in well under 14s;
+    otherwise commits pile up behind each other and stall the final result.
+    """
+    if tier.device == "cuda":
+        return True
+    return _cpu_cores() >= 8 and tier.model_size in ("tiny", "base", "small")
+
+
+def preview_ok(tier: Tier) -> bool:
+    """Live preview re-transcribes the tail every second — GPU only."""
+    return tier.device == "cuda"
+
+
+def ollama_ok(endpoint: str = "http://127.0.0.1:11434",
+              timeout: float = 0.8) -> bool:
+    """True if a local Ollama server is answering. This is a reachability
+    probe, not a benchmark: if Ollama runs at all the user chose to install
+    it, and the polish path stays fail-open (a slow reply just gets skipped
+    by the polish timeout)."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(endpoint.rstrip("/") + "/api/tags",
+                                    timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def ollama_pick_model(preferred: str,
+                      endpoint: str = "http://127.0.0.1:11434",
+                      timeout: float = 0.8) -> "str | None":
+    """Best installed Ollama model for the polish pass, or None.
+
+    Prefers the configured model if installed; otherwise falls back to any
+    installed small instruct model. Polish is latency-sensitive (adds directly
+    to time-to-text), so smaller is better.
+    """
+    import json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(endpoint.rstrip("/") + "/api/tags",
+                                    timeout=timeout) as r:
+            names = [m.get("name", "") for m in
+                     json.loads(r.read()).get("models", [])]
+    except Exception:
+        return None
+    if not names:
+        return None
+    base = {n.split(":")[0]: n for n in names}
+    if preferred in names or preferred in base:
+        return base.get(preferred, preferred)
+    for cand in ("llama3.2", "qwen2.5", "gemma2", "phi3", "mistral",
+                 "hermes4", "llama3.1", "llama3"):
+        if cand in base:
+            return base[cand]
+    return names[0]

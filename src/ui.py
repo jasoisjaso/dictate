@@ -157,6 +157,14 @@ class DictationTrayApp(QObject):
         self.paste_threshold = int(inj.get("paste_threshold", 300))
         self.sounds = bool(cfg.get("feedback", {}).get("sounds", True))
         self.live_preview = bool(cfg.get("preview", {}).get("live_preview", True))
+        # Streaming (chunked while-you-talk transcription) for long takes.
+        # true / false / "auto" — auto defers to hardware gating at record
+        # time (GPU always; CPU only with >=8 cores and a small model).
+        raw_stream = cfg.get("streaming", {}).get("enabled", "auto")
+        self.streaming_mode = (raw_stream.strip().lower()
+                               if isinstance(raw_stream, str)
+                               else ("on" if raw_stream else "off"))
+        self._chunked_take = None
         persist_history = bool(cfg.get("history", {}).get("persist", False))
         from . import paths as _paths
         self.history = History(
@@ -349,7 +357,9 @@ class DictationTrayApp(QObject):
     def _open_settings(self, first_run: bool = False):
         try:
             from .settings_gui import SettingsDialog
-            dlg = SettingsDialog(self.cfg, first_run=first_run)
+            dlg = SettingsDialog(self.cfg, first_run=first_run,
+                                 engine=self.engine,
+                                 app_state=lambda: self.state)
             dlg.saved.connect(self._apply_settings)
             dlg.exec()
         except Exception as ex:
@@ -391,11 +401,17 @@ class DictationTrayApp(QObject):
         extra = cl.get("custom_fillers", []) or []
         if isinstance(extra, str):
             extra = [p.strip() for p in extra.split(",")]
-        merged = list(_cl_mod.FILLERS) + [str(w) for w in extra]
+        lang = self.cfg.get("whisper", {}).get("language", "en")
+        merged = _cl_mod.default_fillers(lang) + [str(w) for w in extra]
         self.engine.filler_re = _cl_mod._build_filler_re(merged)
         self.engine.dictionary = {str(k): str(v) for k, v in
                                   self.cfg.get("dictionary", {}).items()}
-        lang = self.cfg.get("whisper", {}).get("language", "en")
+        # refresh the hotwords spelling boost so dictionary edits apply now
+        if self.engine.dictionary:
+            terms = list(dict.fromkeys(self.engine.dictionary.values()))[:40]
+            self.engine.hotwords = ", ".join(terms)
+        else:
+            self.engine.hotwords = None
         self.engine.language = None if lang in ("", "auto") else lang
         self._set_state(self.state)
         # Apply overlay style change immediately
@@ -585,6 +601,15 @@ class DictationTrayApp(QObject):
         # (covers a stuck push-to-talk key or a forgotten toggle)
         self._monitor_stop.clear()
         threading.Thread(target=self._cap_watchdog, daemon=True).start()
+        # Streaming: commit finished chunks while the user is still talking so
+        # a long take finalizes near-instantly on release. Gated per-PC.
+        self._chunked_take = None
+        if self._streaming_allowed():
+            from .streaming import ChunkedTake
+            self._chunked_take = ChunkedTake(
+                self.engine, self.recorder,
+                on_commit=lambda t: self.overlay.set_preview(t[-120:]))
+            self._chunked_take.start()
         preview_on = (self.live_preview
                       and self.engine.active_device == "cuda")
         self.overlay.show_recording(preview=preview_on)
@@ -600,10 +625,34 @@ class DictationTrayApp(QObject):
         else:
             self.overlay.set_profile_tag("")
         if preview_on:
-            self._preview_stop.clear()
-            threading.Thread(target=self._preview_worker, daemon=True).start()
+            # When streaming commits are active they already feed the preview
+            # pill; running the tail re-transcriber too would just fight the
+            # chunk commits for the engine lock.
+            if self._chunked_take is None:
+                self._preview_stop.clear()
+                threading.Thread(target=self._preview_worker, daemon=True).start()
         self._beep(880, 60)  # high beep = recording start
         return True
+
+    def _streaming_allowed(self) -> bool:
+        """Per-PC gate for chunked streaming. 'auto' asks device.streaming_ok
+        with the ACTIVE device (post CUDA-fallback), so a GPU build running on
+        CPU is judged as the CPU it really is."""
+        if self.streaming_mode == "off":
+            return False
+        if self.engine._model is None:
+            return False  # model still loading — plain path
+        try:
+            from . import device as _device
+            tier = _device.Tier(device=self.engine.active_device or "cpu",
+                                compute_type=self.engine.compute_type,
+                                model_size=self.engine.model_size)
+            allowed = _device.streaming_ok(tier)
+        except Exception:
+            allowed = False
+        if self.streaming_mode == "on":
+            return True  # user forced it on; trust them
+        return allowed
 
     def _stop_and_transcribe(self):
         if self.state != RECORDING:
@@ -618,7 +667,11 @@ class DictationTrayApp(QObject):
         # long take can never permanently soft-lock the app at TRANSCRIBING
         self._transcribe_token = getattr(self, "_transcribe_token", 0) + 1
         token = self._transcribe_token
-        threading.Thread(target=self._transcribe_worker, args=(audio,),
+        # hand the streaming chunker (if any) to the worker; a fresh one is
+        # created on the next _begin_recording
+        chunked, self._chunked_take = self._chunked_take, None
+        threading.Thread(target=self._transcribe_worker,
+                         args=(audio, token, chunked),
                          daemon=True).start()
         # generous budget that scales with audio length (real-time factor is
         # well under 1x even on CPU, so 8s + 1x audio is very safe)
@@ -632,6 +685,9 @@ class DictationTrayApp(QObject):
         icon and an unresponsive hotkey."""
         if self.state == TRANSCRIBING and getattr(self, "_transcribe_token", 0) == token:
             log.warning("transcription watchdog fired (token=%s) — recovering", token)
+            # invalidate the token so the still-running worker's late result is
+            # DROPPED instead of typed into whatever window has focus by then
+            self._transcribe_token += 1
             self.overlay.hide_overlay()
             self._set_state(IDLE)
             self.overlay.flash_toast("that took too long — try a shorter take")
@@ -662,6 +718,9 @@ class DictationTrayApp(QObject):
             return
         self._monitor_stop.set()
         self._preview_stop.set()
+        if self._chunked_take is not None:
+            self._chunked_take.cancel()
+            self._chunked_take = None
         self._ptt_down = False
         # invalidate any pending transcription watchdog
         self._transcribe_token = getattr(self, "_transcribe_token", 0) + 1
@@ -898,11 +957,21 @@ class DictationTrayApp(QObject):
 
     # ---- worker threads --------------------------------------------------
 
-    def _transcribe_worker(self, audio):
+    def _transcribe_worker(self, audio, token=None, chunked=None):
         try:
             t0 = time.time()
-            raw = self.engine.transcribe_audio_buffer(audio)
+            if chunked is not None:
+                # streaming take: committed chunks + tail = near-instant final
+                raw = chunked.finalize(audio)
+            else:
+                raw = self.engine.transcribe_audio_buffer(audio)
             text = self.engine.post_process(raw, profile=self._rec_profile)
+            # If the watchdog (or an abort) already invalidated this token,
+            # the user moved on — never inject a stale result into whatever
+            # window has focus now.
+            if token is not None and getattr(self, "_transcribe_token", 0) != token:
+                log.warning("dropping stale transcription result (token=%s)", token)
+                return
             # timing at INFO; the transcript text only at DEBUG so nothing you
             # dictate is written to the log file at the default level
             log.info("transcribed %.1fs audio in %.1fs (%d chars)",
@@ -919,11 +988,12 @@ class DictationTrayApp(QObject):
     def _preview_worker(self):
         """Live transcript while recording (GPU only): re-transcribe only the
         most recent few seconds of the take and stream that tail into the
-        overlay pill. We deliberately cap the snapshot length: re-transcribing
-        the WHOLE buffer on a long paragraph would hold the engine lock for
-        seconds and stall the real (final) transcription when the user lets go.
-        The preview is just a 'we can hear you' reassurance, so a short tail is
-        plenty."""
+        overlay pill. We deliberately cap the snapshot length AND skip the
+        pass entirely when the engine is busy (try_preview_transcribe is
+        non-blocking): preview jobs must never queue behind or contend with a
+        real transcription — that contention stalls the final result and has
+        crashed the CUDA context. The preview is just a 'we can hear you'
+        reassurance, so dropping frames is fine."""
         PREVIEW_TAIL_S = 8.0   # only ever re-run the last ~8s for the preview
         while not self._preview_stop.wait(1.0):
             if self.state != RECORDING or self.engine._model is None:
@@ -933,7 +1003,7 @@ class DictationTrayApp(QObject):
                 continue
             try:
                 snapshot = self.recorder.peek_tail(min(dur, PREVIEW_TAIL_S))
-                raw = self.engine.transcribe_audio_buffer(snapshot)
+                raw = self.engine.try_preview_transcribe(snapshot)
                 if raw and not self._preview_stop.is_set():
                     self.overlay.set_preview(raw)
             except Exception as ex:

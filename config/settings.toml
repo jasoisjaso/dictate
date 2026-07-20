@@ -46,8 +46,20 @@ limit = 100                      # max entries when persisted (session limit sta
 [post_processing]
 casing = "sentence"              # sentence | upper | lower | off
 strip_trailing_period_short = true
-auto_punctuation = false         # automatically add periods + capitalise
-                                 # (no need to say "period" — like Wispr Flow)
+auto_punctuation = "auto"        # "auto" | true | false
+                                 # auto: on for small CPU models (they skip
+                                 # punctuation), off for large models (they
+                                 # punctuate natively — like Wispr Flow)
+
+# ---- streaming (transcribe WHILE you talk) ---------------------------------
+[streaming]
+enabled = "auto"                 # "auto" | true | false
+                                 # Long takes are transcribed in chunks while
+                                 # you're still talking, so the text appears
+                                 # near-instantly when you release the key.
+                                 # auto: on for GPUs; on for CPUs only with
+                                 # 8+ cores and a small model (weaker PCs
+                                 # keep the classic transcribe-at-end path).
 
 [cleanup]
 remove_fillers = true            # strip "um", "uh", "erm", ...
@@ -56,8 +68,12 @@ custom_fillers = []              # YOUR extra filler words to strip, on top of t
                                  # custom_fillers = ["like", "you know", "basically"]
                                  # Multi-word entries work. Edit this here or in the
                                  # Settings window ("Extra filler words to strip").
-ollama_polish = false            # optional grammar pass via local Ollama (power feature;
-                                 # fail-open: dictation never blocks if Ollama is down)
+ollama_polish = "auto"           # "auto" | true | false
+                                 # auto: grammar polish via a LOCAL Ollama
+                                 # server, enabled only when one is actually
+                                 # running on this PC (probed at startup;
+                                 # best installed model picked). Fail-open:
+                                 # dictation never blocks if Ollama is down.
 ollama_model = "hermes4"
 ollama_endpoint = "http://127.0.0.1:11434"
 

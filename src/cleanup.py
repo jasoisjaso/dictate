@@ -10,11 +10,24 @@ import urllib.request
 log = logging.getLogger("dictate.cleanup")
 
 FILLERS = [
-    # English
+    # English hesitation sounds — safe to strip in any language
     "um", "uh", "erm", "uhh", "umm", "er", "ah",
-    # Bosnian (conversational fillers)
-    "e", "ono", "znaci", "dakle", "pa", "vale", "ajde", "ma",
 ]
+
+# Bosnian/Croatian/Serbian hesitation sounds. ONLY pure hesitations belong
+# here. Words like "pa", "ma", "e", "ono", "znaci", "dakle" are REAL words
+# used constantly in normal Bosnian sentences — stripping them mangles long
+# dictations (words silently disappear mid-sentence). If a user wants those
+# gone they can add them via custom_fillers explicitly.
+FILLERS_BS = ["ovaj", "hm", "hmm", "mhm", "aha", "eee"]
+
+
+def default_fillers(language: str | None = None) -> list[str]:
+    """Built-in filler list appropriate for the configured language."""
+    out = list(FILLERS)
+    if (language or "").lower() in ("bs", "hr", "sr"):
+        out += FILLERS_BS
+    return out
 
 # Phrases faster-whisper/Whisper confidently emits on silence or near-silent
 # audio (the infamous "no speech -> subscribe" hallucinations). If the WHOLE

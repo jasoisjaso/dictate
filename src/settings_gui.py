@@ -102,9 +102,15 @@ class SettingsDialog(QDialog):
     saved = Signal(dict)
     _mic_result_ready = Signal(str)
 
-    def __init__(self, cfg: dict, first_run: bool = False, parent=None):
+    def __init__(self, cfg: dict, first_run: bool = False, parent=None,
+                 engine=None, app_state=None):
         super().__init__(parent)
         self.cfg = cfg
+        # Direct handles from the tray app (None when opened standalone):
+        # engine    — the loaded WhisperTranscriber, for the mic test
+        # app_state — callable returning the tray state ("idle"/"recording"/…)
+        self._engine = engine
+        self._app_state = app_state
         self.setWindowTitle("Dictate — Settings" if not first_run
                             else "Welcome to Dictate")
         self.setMinimumWidth(480)
@@ -261,7 +267,11 @@ class SettingsDialog(QDialog):
         self.chk_fillers.setChecked(bool(cl.get("remove_fillers", True)))
         v.addWidget(self.chk_fillers)
         self.chk_auto_punct = QCheckBox("Auto-punctuation (add periods + capitalise)")
-        self.chk_auto_punct.setChecked(bool(cfg.get("post_processing", {}).get("auto_punctuation", False)))
+        _ap = cfg.get("post_processing", {}).get("auto_punctuation", "auto")
+        # "auto" (the default) shows unchecked; we only WRITE this key if the
+        # user actually toggles the box, so the smart auto mode survives saves
+        self._ap_initial = _ap
+        self.chk_auto_punct.setChecked(_ap is True)
         v.addWidget(self.chk_auto_punct)
         self.chk_persist_history = QCheckBox("Save history to disk")
         self.chk_persist_history.setChecked(bool(cfg.get("history", {}).get("persist", False)))
@@ -354,22 +364,19 @@ class SettingsDialog(QDialog):
                 if audio_data.size < 1600:
                     self._mic_result_ready.emit("No audio - check your mic")
                     return
-                from PySide6.QtWidgets import QApplication
-                app = QApplication.instance()
-                tray_app = None
-                for obj in app.children():
-                    if hasattr(obj, "engine") and obj.engine is not None:
-                        if hasattr(obj.engine, "_model") and obj.engine._model is not None:
-                            tray_app = obj
-                            break
-                if tray_app is None:
+                # Use the engine handed to us by the tray app. The old code
+                # hunted for it via QApplication.children(), which never found
+                # it (the tray app has no Qt parent) — so the mic test always
+                # said "Model not loaded".
+                engine = self._engine
+                if engine is None or getattr(engine, "_model", None) is None:
                     self._mic_result_ready.emit("Model not loaded - wait for green icon")
                     return
-                if hasattr(tray_app, "state") and tray_app.state != "idle":
+                if self._app_state is not None and self._app_state() != "idle":
                     self._mic_result_ready.emit("App is busy - stop recording first")
                     return
-                raw = tray_app.engine.transcribe_audio_buffer(audio_data)
-                text = tray_app.engine.post_process(raw) if raw else ""
+                raw = engine.transcribe_audio_buffer(audio_data)
+                text = engine.post_process(raw) if raw else ""
                 if text:
                     self._mic_result_ready.emit(f'Heard: "{text}"')
                 else:
@@ -410,7 +417,8 @@ class SettingsDialog(QDialog):
             },
             "post_processing": {
                 "auto_punctuation": self.chk_auto_punct.isChecked(),
-            },
+            } if self.chk_auto_punct.isChecked() != (self._ap_initial is True)
+            else {},
             "history": {
                 "persist": self.chk_persist_history.isChecked(),
             },

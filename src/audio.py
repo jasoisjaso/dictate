@@ -178,6 +178,15 @@ class AudioRecorder:
             return np.zeros(0, dtype=np.float32)
         return np.concatenate(list(reversed(take)))[-want:]
 
+    def snapshot(self) -> np.ndarray:
+        """Copy of the WHOLE take so far, without stopping the recording.
+        Used by the streaming chunker to commit finished portions early."""
+        with self._lock:
+            chunks = list(self._chunks)
+        if not chunks:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(chunks)
+
     def close(self):
         self._active = False
         if self._stream is not None:

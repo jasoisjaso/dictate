@@ -31,8 +31,8 @@ python -m nuitka ^
   --windows-icon-from-ico=assets\dictate.ico ^
   --company-name=Dictate ^
   --product-name=Dictate ^
-  --file-version=1.1.0 ^
-  --product-version=1.1.0 ^
+  --file-version=1.2.0 ^
+  --product-version=1.2.0 ^
   --include-package=faster_whisper ^
   --include-package-data=faster_whisper ^
   --include-module=av.utils ^

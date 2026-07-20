@@ -37,11 +37,20 @@ def main():
     log = logging.getLogger("dictate")
     log.info("=== Dictate starting (log: %s) ===", log_file)
 
+    # Native crash net: faster-whisper/ctranslate2/CUDA crashes happen in C++
+    # and kill the process with NO Python traceback — the log just stops dead.
+    # faulthandler catches access violations on Windows and writes the stack
+    # to crash.log so we can actually see what died.
+    import faulthandler
+    from . import paths
+    crash_file = open(os.path.join(paths.app_data_dir(), "crash.log"), "a")
+    faulthandler.enable(file=crash_file)
+
     # Must happen before any faster_whisper / ctranslate2 import.
     from .win32_input import configure_cuda_dll_search_paths
     configure_cuda_dll_search_paths()
 
-    from . import config as config_mod, paths
+    from . import config as config_mod
     cfg = config_mod.load()
     first_run = not os.path.exists(paths.config_path())
 

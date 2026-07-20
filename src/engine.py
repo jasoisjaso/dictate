@@ -82,25 +82,43 @@ class WhisperTranscriber:
         if isinstance(extra, str):
             # tolerate a comma-separated string if someone hand-edits the TOML
             extra = [p for p in re.split(r",", extra)]
-        merged = list(_cl_mod.FILLERS) + [str(w) for w in extra]
+        merged = _cl_mod.default_fillers(lang) + [str(w) for w in extra]
         self.custom_fillers = [w for w in (str(x).strip() for x in extra) if w]
         self.filler_re = _cl_mod._build_filler_re(merged)
-        self.ollama_polish = bool(cl.get("ollama_polish", False))
+        # ollama_polish accepts true / false / "auto".
+        #   auto: enabled only if a local Ollama server is actually reachable
+        #   (probed once in load(), off the GUI thread). Fail-open either way.
+        raw_polish = cl.get("ollama_polish", "auto")
+        self.ollama_polish_mode = (raw_polish.strip().lower()
+                                   if isinstance(raw_polish, str)
+                                   else ("on" if raw_polish else "off"))
+        self.ollama_polish = self.ollama_polish_mode == "on"
         self.ollama_model = cl.get("ollama_model", "hermes4")
         self.ollama_endpoint = cl.get("ollama_endpoint", "http://127.0.0.1:11434")
         self.dictionary = {str(k): str(v)
                            for k, v in cfg.get("dictionary", {}).items()}
-        # spelling boost: nudge Whisper toward the user's proper nouns.
-        # Cap the term count — Whisper's prompt is limited to ~224 tokens and
-        # silently truncates, and a giant prompt hurts accuracy and speed.
-        if self.dictionary and not self.initial_prompt:
+        # spelling boost: nudge Whisper toward the user's proper nouns via
+        # faster-whisper's dedicated `hotwords` channel. Unlike initial_prompt
+        # (which the model treats as preceding TEXT and will happily imitate,
+        # e.g. starting transcripts with "Terms: ..."), hotwords only bias
+        # decoding. Capped: a huge list dilutes the effect and eats context.
+        self.hotwords = None
+        if self.dictionary:
             terms = list(dict.fromkeys(self.dictionary.values()))[:40]
-            self.initial_prompt = "Terms: " + ", ".join(terms) + "."
+            self.hotwords = ", ".join(terms)
         self.vad_enabled = bool(cfg.get("vad", {}).get("enabled", True))
         self.vad_onset = float(cfg.get("vad", {}).get("onset_threshold", 0.5))
         pp = cfg.get("post_processing", {})
         self.casing = pp.get("casing", "sentence")
-        self.auto_punctuation = bool(pp.get("auto_punctuation", False))
+        # auto_punctuation accepts true / false / "auto".
+        #   auto: on only for the small CPU-tier models (tiny/base/small) that
+        #   habitually return unpunctuated text; the large models punctuate
+        #   natively and double-processing them just adds noise.
+        raw_ap = pp.get("auto_punctuation", "auto")
+        if isinstance(raw_ap, str) and raw_ap.strip().lower() == "auto":
+            self.auto_punctuation = self.model_size in ("tiny", "base", "small")
+        else:
+            self.auto_punctuation = bool(raw_ap)
         self.strip_short = bool(pp.get("strip_trailing_period_short",
                                        pp.get("strip", True)))
         self.transforms = cfg.get("transforms", []) or []
@@ -135,6 +153,22 @@ class WhisperTranscriber:
                     num_workers=1, **kw)
                 self.active_device = "cpu"
             log.info("model %s loaded on %s", self.model_size, self.active_device)
+        # Resolve ollama_polish="auto" now that we're on a background thread:
+        # probe the local server once; pick the best installed model.
+        if self.ollama_polish_mode == "auto":
+            try:
+                from . import device as _device
+            except ImportError:
+                import device as _device
+            if _device.ollama_ok(self.ollama_endpoint):
+                picked = _device.ollama_pick_model(self.ollama_model,
+                                                   self.ollama_endpoint)
+                if picked:
+                    self.ollama_model = picked
+                    self.ollama_polish = True
+                    log.info("ollama polish auto-enabled (model=%s)", picked)
+            else:
+                log.info("ollama not reachable — polish stays off")
         # Warm up: run a 1s dummy transcription so CUDA kernels are compiled
         # and memory is pre-allocated. First real dictation will be instant.
         try:
@@ -156,21 +190,41 @@ class WhisperTranscriber:
             return 3
         return self.beam_size
 
-    def transcribe_audio_buffer(self, audio_data: np.ndarray) -> str:
-        """Raw transcription of a float32 mono 16 kHz buffer."""
+    def transcribe_audio_buffer(self, audio_data: np.ndarray,
+                                prev_text: str | None = None) -> str:
+        """Raw transcription of a float32 mono 16 kHz buffer.
+
+        prev_text: tail of the previously committed chunk (streaming mode) —
+        fed as initial_prompt so terminology stays consistent across chunks.
+        """
         if audio_data.size < 1600:  # under 0.1 s — nothing to do
             return ""
         self.load()
         beam = self._adaptive_beam_size(audio_data)
+        duration = audio_data.size / 16000
+        # Long takes span multiple 30s Whisper windows. Carrying the previous
+        # window's text as context keeps names/terminology consistent across
+        # the take. Short takes fit one window, so keep it off there (it's the
+        # classic hallucination-loop amplifier on noisy short audio).
+        cond_prev = duration > 25.0
+        prompt = self.initial_prompt
+        if prev_text:
+            # last ~200 chars of the previous chunk as rolling context
+            prompt = (prompt + " " if prompt else "") + prev_text[-200:]
+        # Pad the VAD speech boundaries so the filter can't clip the first or
+        # last syllable — the main source of "long sentences lose words".
+        vad_params = dict(min_silence_duration_ms=500, speech_pad_ms=400)
         with self._lock:
             segments, _info = self._model.transcribe(
                 audio_data,
                 language=self.language,
                 task="transcribe",
                 beam_size=beam,
-                initial_prompt=self.initial_prompt,
+                initial_prompt=prompt,
+                hotwords=self.hotwords,
                 vad_filter=self.vad_enabled,
-                condition_on_previous_text=False,
+                vad_parameters=vad_params if self.vad_enabled else None,
+                condition_on_previous_text=cond_prev,
                 without_timestamps=True,
             )
             text = " ".join(s.text.strip() for s in segments).strip()
@@ -182,9 +236,10 @@ class WhisperTranscriber:
                     language=self.language,
                     task="transcribe",
                     beam_size=beam,
-                    initial_prompt=self.initial_prompt,
+                    initial_prompt=prompt,
+                    hotwords=self.hotwords,
                     vad_filter=False,
-                    condition_on_previous_text=False,
+                    condition_on_previous_text=cond_prev,
                     without_timestamps=True,
                 )
                 text = " ".join(s.text.strip() for s in segments).strip()
@@ -203,6 +258,37 @@ class WhisperTranscriber:
             return ""
         log.debug("raw transcript: %r", text)
         return text
+
+    def try_preview_transcribe(self, audio_data: np.ndarray) -> str | None:
+        """Best-effort transcription for the live preview pill.
+
+        Returns None immediately if the engine lock is held (a real
+        transcription is running). The preview must NEVER queue behind the
+        final pass: piling preview jobs onto the model while the final
+        transcription runs is both a latency killer and a crash risk
+        (concurrent pressure on the same CUDA context).
+        """
+        if audio_data.size < 1600 or self._model is None:
+            return None
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            segments, _info = self._model.transcribe(
+                audio_data,
+                language=self.language,
+                task="transcribe",
+                beam_size=1,
+                hotwords=self.hotwords,
+                vad_filter=False,
+                condition_on_previous_text=False,
+                without_timestamps=True,
+            )
+            return " ".join(s.text.strip() for s in segments).strip()
+        except Exception as ex:
+            log.debug("preview transcribe failed: %s", ex)
+            return None
+        finally:
+            self._lock.release()
 
     def has_speech(self, audio_data: np.ndarray) -> bool:
         """Silero VAD check used by the live auto-stop monitor."""

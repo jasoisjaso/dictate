@@ -223,12 +223,19 @@ if IS_WINDOWS:
         inp.ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=flags, time=0, dwExtraInfo=None)
         return inp
 
-    def inject_text_via_paste(text_string: str, restore_delay: float = 0.3):
+    def inject_text_via_paste(text_string: str, restore_delay: float = 1.2):
         """Put text on the clipboard, press Ctrl+V, then restore what was there.
 
         Restores only text contents; images/files on the clipboard are lost —
         that trade-off is logged. Returns True if the paste keystroke was sent.
+
+        The restore runs on a background thread after `restore_delay` seconds:
+        restoring too early is the classic "long dictation pasted my OLD
+        clipboard" bug — slow apps (Electron, Office, RDP) read the clipboard
+        well after the Ctrl+V keystroke lands. 1.2s is safe and the thread
+        keeps the GUI responsive in the meantime.
         """
+        import threading as _threading
         import time as _time
         old = _clipboard_get_text()
         if old is None:
@@ -243,10 +250,16 @@ if IS_WINDOWS:
             _vk_event(VK_V, KEYEVENTF_KEYUP),
             _vk_event(VK_CONTROL, KEYEVENTF_KEYUP),
         ])
-        # let the target app read the clipboard before we restore it
-        _time.sleep(restore_delay)
+        # let the target app read the clipboard before we restore it — off the
+        # calling (GUI) thread so dictation stays snappy
         if old is not None:
-            _clipboard_set_text(old)
+            def _restore():
+                _time.sleep(restore_delay)
+                # if the user copied something themselves in the window, don't
+                # stomp it — only restore if our text is still on the clipboard
+                if _clipboard_get_text() == text_string:
+                    _clipboard_set_text(old)
+            _threading.Thread(target=_restore, daemon=True).start()
         return True
 
     def inject_backspaces(count: int):
