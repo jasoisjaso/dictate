@@ -21,6 +21,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: requirements-win.txt
 
       - name: Install test dependencies
         # The unit tests are pure-python (engine logic, streaming cuts,
