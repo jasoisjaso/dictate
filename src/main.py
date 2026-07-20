@@ -43,7 +43,12 @@ def main():
     # to crash.log so we can actually see what died.
     import faulthandler
     from . import paths
-    crash_file = open(os.path.join(paths.app_data_dir(), "crash.log"), "a")
+    crash_path = os.path.join(paths.app_data_dir(), "crash.log")
+    # BEFORE opening (which may grow the file), compare against last run's
+    # baseline: did we crash? should we fall back to CPU?
+    from . import crashguard
+    recovery = crashguard.startup_check(paths.app_data_dir(), crash_path)
+    crash_file = open(crash_path, "a")
     faulthandler.enable(file=crash_file)
 
     # Must happen before any faster_whisper / ctranslate2 import.
@@ -52,6 +57,11 @@ def main():
 
     from . import config as config_mod
     cfg = config_mod.load()
+    if recovery["force_cpu"]:
+        # two consecutive CUDA crashes -> run this session on CPU
+        cfg.setdefault("whisper", {})
+        cfg["whisper"]["device"] = "cpu"
+        cfg["whisper"]["compute_type"] = "int8"
     first_run = not os.path.exists(paths.config_path())
 
     from PySide6.QtCore import QLockFile
@@ -75,7 +85,8 @@ def main():
         sys.exit(1)
 
     from .ui import DictationTrayApp
-    tray_app = DictationTrayApp(cfg, app, first_run=first_run)  # noqa: F841
+    tray_app = DictationTrayApp(cfg, app, first_run=first_run,
+                                recovery_note=recovery.get("note"))  # noqa: F841
     sys.exit(app.exec())
 
 

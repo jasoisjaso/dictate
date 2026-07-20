@@ -120,12 +120,15 @@ class DictationTrayApp(QObject):
     _sig_dl_start = Signal(str)
     _sig_dl_progress = Signal(int)
     _sig_dl_done = Signal()
+    _sig_update_available = Signal(str, str)
 
-    def __init__(self, cfg: dict, app: QApplication, first_run: bool = False):
+    def __init__(self, cfg: dict, app: QApplication, first_run: bool = False,
+                 recovery_note: str | None = None):
         super().__init__()
         self.cfg = cfg
         self.app = app
         self.state = LOADING
+        self._recovery_note = recovery_note
         self.engine = WhisperTranscriber(cfg)
         self.recorder = AudioRecorder(
             input_device=cfg.get("audio", {}).get("input_device"))
@@ -206,6 +209,7 @@ class DictationTrayApp(QObject):
         self._sig_dl_start.connect(self._on_dl_start)
         self._sig_dl_progress.connect(self._on_dl_progress)
         self._sig_dl_done.connect(self._on_dl_done)
+        self._sig_update_available.connect(self._on_update_available)
         self._dl_dialog = None
 
         self._start_hotkeys()
@@ -566,9 +570,62 @@ class DictationTrayApp(QObject):
             "Dictate ready",
             f"{self.engine.model_size} on {device}. {self._trigger_hint()}.",
             QSystemTrayIcon.Information, 4000)
+        # Crash recovery: tell the user what happened last run (once, after
+        # the ready balloon) and record what device this run uses so the
+        # crash guard can decide about CPU fallback next time.
+        try:
+            from . import paths as _paths, crashguard as _cg
+            _cg.record_device(_paths.app_data_dir(), self.engine.active_device)
+        except Exception:
+            log.debug("crashguard record failed", exc_info=True)
+        if self._recovery_note:
+            note = self._recovery_note
+            self._recovery_note = None
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(4500, lambda: self.tray.showMessage(
+                "Dictate — recovered from a crash", note,
+                QSystemTrayIcon.Warning, 10000))
+        # Update check: throttled (max ~1 HTTP call/day), fail-silent,
+        # runs off the GUI thread. Result crosses back via signal.
+        threading.Thread(target=self._update_check_worker, daemon=True).start()
+
+    def _update_check_worker(self):
+        try:
+            from . import paths as _paths, update_check, version
+            upd = update_check.check_github(
+                "jasoisjaso/dictate", version.__version__,
+                state_dir=_paths.app_data_dir())
+            if upd:
+                self._sig_update_available.emit(upd.tag, upd.url)
+        except Exception:
+            log.debug("update check failed", exc_info=True)
+
+    def _on_update_available(self, tag: str, url: str):
+        self._update_url = url
+        self.tray.showMessage(
+            "Dictate — update available",
+            f"Version {tag} is out. Click here to download.",
+            QSystemTrayIcon.Information, 10000)
+        try:
+            self.tray.messageClicked.disconnect(self._open_update_page)
+        except (RuntimeError, TypeError):
+            pass
+        self.tray.messageClicked.connect(self._open_update_page)
+
+    def _open_update_page(self):
+        url = getattr(self, "_update_url", None)
+        if url:
+            import webbrowser
+            webbrowser.open(url)
 
     def _begin_recording(self) -> bool:
         if self.state != IDLE:
+            # UX: pressing the hotkey during the ~7s model load used to do
+            # NOTHING — the most common "is it broken?" moment. Say so.
+            if self.state == LOADING:
+                self.overlay.flash_toast("still loading — ready in a moment")
+            elif self.state == TRANSCRIBING:
+                self.overlay.flash_toast("finishing the last one…")
             return False
         # If not in "auto" mode, the manual mode overrides per-app detection.
         # "code" forces verbatim (like a terminal profile).

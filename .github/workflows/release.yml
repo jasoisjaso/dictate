@@ -1,0 +1,121 @@
+name: Release
+
+# Builds BOTH installers and attaches them to the GitHub release whenever a
+# v* tag is pushed. Also runnable by hand (workflow_dispatch) to test the
+# pipeline without cutting a release.
+#
+# This exists because hand-built releases go stale: v1.2.0 nearly shipped a
+# 5-day-old CPU installer that predated every crash fix.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest numpy faster-whisper==1.2.1
+      - name: Run tests
+        run: pytest tests/ -q
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        variant: [cpu, gpu]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install app dependencies
+        shell: cmd
+        run: |
+          python -m pip install --upgrade pip
+          pip install faster-whisper==1.2.1 sounddevice>=0.5.1 pynput>=1.8.1 "PySide6>=6.7" "numpy>=1.26,<3" nuitka
+
+      - name: Install CUDA wheels (gpu only)
+        if: matrix.variant == 'gpu'
+        shell: cmd
+        run: pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
+
+      - name: Compile with Nuitka
+        shell: cmd
+        run: |
+          python -m nuitka ^
+            --standalone ^
+            --assume-yes-for-downloads ^
+            --enable-plugin=pyside6 ^
+            --windows-console-mode=disable ^
+            --windows-icon-from-ico=assets\dictate.ico ^
+            --company-name=Dictate ^
+            --product-name=Dictate ^
+            --include-package=faster_whisper ^
+            --include-package-data=faster_whisper ^
+            --include-module=av.utils ^
+            --include-package=src ^
+            --include-data-dir=config=config ^
+            --output-dir=build ^
+            --output-filename=Dictate.exe ^
+            dictate_launcher.py
+
+      - name: Copy CUDA runtime DLLs (gpu only)
+        if: matrix.variant == 'gpu'
+        shell: cmd
+        run: |
+          robocopy %pythonLocation%\Lib\site-packages\nvidia build\dictate_launcher.dist\nvidia /E /NFL /NDL /NJH /NJS
+          if %ERRORLEVEL% GEQ 8 (exit /b 1) else (exit /b 0)
+
+      - name: Install Inno Setup
+        shell: cmd
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: cmd
+        run: |
+          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" /DVariant=${{ matrix.variant }} packaging\installer.iss
+
+      - name: Rename to variant
+        shell: pwsh
+        run: |
+          # ISCC names by /DVariant already (Dictate-Setup-<variant>.exe)
+          Get-ChildItem packaging/Output
+
+      - name: Attach to release (tag builds)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          # create the release if the tag was pushed before one exists
+          gh release view ${{ github.ref_name }} 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create ${{ github.ref_name }} --generate-notes
+          }
+          gh release upload ${{ github.ref_name }} `
+            packaging/Output/Dictate-Setup-${{ matrix.variant }}.exe --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact (manual runs)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dictate-Setup-${{ matrix.variant }}
+          path: packaging/Output/Dictate-Setup-${{ matrix.variant }}.exe
+          retention-days: 7
