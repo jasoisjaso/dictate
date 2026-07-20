@@ -58,6 +58,14 @@ jobs:
         shell: cmd
         run: pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 
+      - name: Read app version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path src/version.py -Pattern '__version__ = "(.+)"').Matches.Groups[1].Value
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "App version: $v"
+
       - name: Compile with Nuitka
         shell: cmd
         run: |
@@ -69,6 +77,8 @@ jobs:
             --windows-icon-from-ico=assets\dictate.ico ^
             --company-name=Dictate ^
             --product-name=Dictate ^
+            --file-version=${{ steps.ver.outputs.version }} ^
+            --product-version=${{ steps.ver.outputs.version }} ^
             --include-package=faster_whisper ^
             --include-package-data=faster_whisper ^
             --include-module=av.utils ^
