@@ -235,12 +235,30 @@ Auto mode detects your hardware and picks the best model:
 
 If a GPU load fails, Dictate quietly falls back to CPU instead of crashing.
 
+### Smart features that adapt to your PC (v1.2)
+
+These turn themselves on only when your hardware can afford them — on a weak
+laptop Dictate stays lean and just transcribes:
+
+| Feature | When it's enabled | What it does |
+|---|---|---|
+| Streaming transcription | Any NVIDIA GPU; or CPU with 8+ cores on a small model | Long takes are transcribed in chunks *while you talk* — text appears near-instantly when you release the key |
+| Live preview pill | NVIDIA GPU only | Shows what it's hearing while you speak |
+| Ollama grammar polish | Only if a local Ollama server is running | Local-LLM grammar pass; picks your best installed model; never blocks dictation |
+| Auto-punctuation | Small CPU models only (large models punctuate natively) | Adds periods + capitals so you don't say "period" |
+
+All four accept `"auto"` (default), `true` (force on) or `false` (force off)
+in settings.toml.
+
 ### Engine Optimizations
 
 - **Model warmup** — dummy 1s transcription at startup so the first real use is instant
 - **Adaptive beam_size** — beam_size=1 for short takes (2-3x faster), 5 for long
 - **without_timestamps** — 20% faster inference (we don't need timestamps)
 - **num_workers=1** — prevents thread contention with audio capture
+- **hotwords** — your dictionary terms bias decoding directly (no prompt hijack)
+- **VAD speech padding** — 400 ms guard so word edges never get clipped
+- **Crash net** — native CUDA/C++ crashes write a stack trace to crash.log
 
 ---
 
