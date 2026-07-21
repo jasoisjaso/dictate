@@ -6,15 +6,26 @@ REM ---------------------------------------------------------------------------
 REM Build the PORTABLE edition: a folder you drop on a USB stick and run.
 REM No installer, no admin, no writes to the host beyond a temp lock file.
 REM
-REM   packaging\make_portable.bat        -> GPU edition (CUDA bundled, turbo+small models)
-REM   packaging\make_portable.bat cpu    -> CPU edition (small model, runs anywhere)
+REM   packaging\make_portable.bat                -> GPU edition (CUDA bundled)
+REM   packaging\make_portable.bat cpu            -> CPU edition (runs anywhere)
+REM   packaging\make_portable.bat gpu nobuild    -> reuse the existing
+REM                                                 build\dictate_launcher.dist
+REM                                                 (skip the Nuitka compile)
 REM ---------------------------------------------------------------------------
 
 set VARIANT=%1
 if "%VARIANT%"=="" set VARIANT=gpu
 set OUT=portable\Dictate-Portable-%VARIANT%
 
-call packaging\build_nuitka.bat %VARIANT% || goto :err
+if /i "%2"=="nobuild" (
+  if not exist "build\dictate_launcher.dist\Dictate.exe" (
+    echo nobuild requested but build\dictate_launcher.dist is missing
+    goto :err
+  )
+  echo Reusing existing build\dictate_launcher.dist
+) else (
+  call packaging\build_nuitka.bat %VARIANT% || goto :err
+)
 
 echo Assembling %OUT% ...
 if exist "%OUT%" rmdir /s /q "%OUT%"
@@ -23,6 +34,9 @@ if errorlevel 8 goto :err
 
 REM The marker file that flips paths.py into portable mode.
 > "%OUT%\portable.txt" echo Dictate portable mode: config, models and logs live in the Data folder next to this file.
+
+REM Full bilingual how-to (same page the installer shows).
+copy /y packaging\quickstart.txt "%OUT%\QuickStart.txt" >nul
 
 REM Pre-bundle the small model (multilingual, runs on anything) so the stick
 REM works with NO internet on the host. On a GPU host WITH internet the app
@@ -44,6 +58,7 @@ echo 4. Hold RIGHT CTRL and talk. Let go. Your words get typed.
 echo.
 echo Everything stays on this stick: settings, speech models, logs.
 echo Nothing is installed on the computer and no admin password is needed.
+echo More details: QuickStart.txt in this folder.
 echo.
 echo ----------------------------------------------------------------------
 echo.
@@ -61,6 +76,7 @@ echo automatski prebaci na bosanski.
 echo.
 echo Sve ostaje na ovom stiku: postavke, modeli, zapisi.
 echo Nista se ne instalira na racunar i ne treba administratorska lozinka.
+echo Vise detalja: QuickStart.txt u ovom folderu.
 ) > "%OUT%\README-FIRST.txt"
 
 echo Zipping (this takes a while for the gpu edition)...
