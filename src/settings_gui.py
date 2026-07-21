@@ -241,7 +241,16 @@ class SettingsDialog(QDialog):
 
         # Startup
         self.chk_login = QCheckBox("Start Dictate when I log in")
-        if platform.system() == "Windows":
+        try:
+            from . import paths as _paths
+        except ImportError:
+            import paths as _paths
+        if _paths.is_portable():
+            # Running off a USB stick: writing login hooks onto someone
+            # else's machine is exactly what portable mode promises NOT to do.
+            self.chk_login.setVisible(False)
+            self._startup = None
+        elif platform.system() == "Windows":
             try:
                 from . import startup as _startup
             except ImportError:

@@ -172,10 +172,18 @@ class WhisperTranscriber:
                 log.warning("device %r/%s failed (%s); falling back to CPU int8",
                             self.device, self.compute_type, ex)
                 self.device, self.compute_type = "cpu", "int8"
-                self._model = WhisperModel(
-                    self.model_size, device="cpu", compute_type="int8",
-                    num_workers=1, **kw)
-                self.active_device = "cpu"
+                try:
+                    self._model = WhisperModel(
+                        self.model_size, device="cpu", compute_type="int8",
+                        num_workers=1, **kw)
+                    self.active_device = "cpu"
+                except Exception as ex2:
+                    # Last resort (portable stick on an offline host): use ANY
+                    # model already cached on disk instead of dying.
+                    log.warning("model %r unavailable (%s); trying cached models",
+                                self.model_size, ex2)
+                    self._model = self._load_any_cached(WhisperModel, kw)
+                    self.active_device = "cpu"
             log.info("model %s loaded on %s", self.model_size, self.active_device)
         # Resolve ollama_polish="auto" now that we're on a background thread:
         # probe the local server once; pick the best installed model.
@@ -207,6 +215,33 @@ class WhisperTranscriber:
             log.info("model warmed up")
         except Exception as ex:
             log.debug("warmup failed (non-critical): %s", ex)
+
+    def _load_any_cached(self, WhisperModel, kw):
+        """Try every model repo already present in the cache dir, best first.
+        Keeps a portable stick usable on an offline host even when the
+        configured model was never downloaded."""
+        import os
+        cache = kw.get("download_root", "")
+        try:
+            names = os.listdir(cache)
+        except OSError:
+            names = []
+        candidates = sorted(
+            (n for n in names if n.startswith("models--")),
+            key=lambda n: ("turbo" not in n, "small" not in n))
+        for name in candidates:
+            repo_id = name[len("models--"):].replace("--", "/")
+            try:
+                m = WhisperModel(repo_id, device="cpu", compute_type="int8",
+                                 local_files_only=True, num_workers=1, **kw)
+                self.model_size = repo_id
+                log.info("recovered with cached model %s", repo_id)
+                return m
+            except Exception as ex:
+                log.debug("cached candidate %s failed: %s", repo_id, ex)
+        raise RuntimeError(
+            "No usable speech model found. Connect to the internet once so "
+            "Dictate can download one, then it works offline forever.")
 
     def _adaptive_beam_size(self, audio_data: np.ndarray) -> int:
         """Short takes don't need beam_size=5 — beam_size=1 is 2-3x faster
