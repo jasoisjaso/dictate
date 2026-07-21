@@ -323,6 +323,64 @@ class SettingsDialog(QDialog):
         v3.addStretch(1)
         self.tabs.addTab(tab3, "Cleanup & Test")
 
+        # ═══════════════ TAB 4: Advanced ═══════════════
+        tab4 = QWidget()
+        v4 = QVBoxLayout(tab4)
+        v4.setContentsMargins(6, 6, 6, 6)
+        g_adv = QGroupBox("Smart features (Auto = decided by this PC)")
+        f = QFormLayout(g_adv)
+
+        def _tristate(current) -> QComboBox:
+            cb = QComboBox()
+            cb.addItem("Auto (recommended)", "auto")
+            cb.addItem("On", True)
+            cb.addItem("Off", False)
+            pos = cb.findData(current)
+            cb.setCurrentIndex(pos if pos >= 0 else 0)
+            return cb
+
+        self.cb_streaming = _tristate(
+            cfg.get("streaming", {}).get("enabled", "auto"))
+        f.addRow("Transcribe while talking:", self.cb_streaming)
+        self.cb_polish = _tristate(
+            cfg.get("cleanup", {}).get("ollama_polish", "auto"))
+        f.addRow("AI grammar polish (local Ollama):", self.cb_polish)
+
+        self.cb_cleanup_lvl = QComboBox()
+        for val, label in [("off", "Off: exactly what I said"),
+                           ("light", "Light: remove um/uh only"),
+                           ("standard", "Standard (recommended)"),
+                           ("high", "High: full AI polish")]:
+            self.cb_cleanup_lvl.addItem(label, val)
+        cur_lvl = str(cfg.get("cleanup", {}).get("level", "standard")).lower()
+        pos = self.cb_cleanup_lvl.findData(cur_lvl)
+        self.cb_cleanup_lvl.setCurrentIndex(pos if pos >= 0 else 2)
+        f.addRow("Cleanup level:", self.cb_cleanup_lvl)
+
+        self.cb_inject = QComboBox()
+        for val, label in [("auto", "Auto (recommended)"),
+                           ("type", "Type each character"),
+                           ("paste", "Paste via clipboard")]:
+            self.cb_inject.addItem(label, val)
+        cur_inj = cfg.get("injection", {}).get("mode", "auto")
+        pos = self.cb_inject.findData(cur_inj)
+        self.cb_inject.setCurrentIndex(pos if pos >= 0 else 0)
+        f.addRow("How text is inserted:", self.cb_inject)
+
+        self.cb_ui_lang = QComboBox()
+        for val, label in [("auto", "Auto (match dictation language)"),
+                           ("en", "English"),
+                           ("bs", "Bosanski")]:
+            self.cb_ui_lang.addItem(label, val)
+        cur_ui = str(cfg.get("ui", {}).get("language", "auto")).lower()
+        pos = self.cb_ui_lang.findData(cur_ui)
+        self.cb_ui_lang.setCurrentIndex(pos if pos >= 0 else 0)
+        f.addRow("Interface language / Jezik sučelja:", self.cb_ui_lang)
+
+        v4.addWidget(g_adv)
+        v4.addStretch(1)
+        self.tabs.addTab(tab4, "Advanced")
+
         # --- Buttons (always visible at bottom) ---
         btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         btns.accepted.connect(self._save)
@@ -414,6 +472,17 @@ class SettingsDialog(QDialog):
                 "remove_fillers": self.chk_fillers.isChecked(),
                 "custom_fillers": [w for w in (
                     p.strip() for p in self.ed_fillers.text().split(",")) if w],
+                "ollama_polish": self.cb_polish.currentData(),
+                "level": self.cb_cleanup_lvl.currentData(),
+            },
+            "streaming": {
+                "enabled": self.cb_streaming.currentData(),
+            },
+            "injection": {
+                "mode": self.cb_inject.currentData(),
+            },
+            "ui": {
+                "language": self.cb_ui_lang.currentData(),
             },
             "post_processing": {
                 "auto_punctuation": self.chk_auto_punct.isChecked(),

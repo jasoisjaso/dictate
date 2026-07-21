@@ -129,6 +129,10 @@ class DictationTrayApp(QObject):
         self.app = app
         self.state = LOADING
         self._recovery_note = recovery_note
+        # UI language: "auto" follows the dictation language (bs/hr/sr get
+        # Bosnian tray + toasts), or forced via [ui] language = "en"/"bs"
+        from .i18n import Translator, resolve_ui_language
+        self.tr = Translator(resolve_ui_language(cfg))
         self.engine = WhisperTranscriber(cfg)
         self.recorder = AudioRecorder(
             input_device=cfg.get("audio", {}).get("input_device"))
@@ -231,38 +235,38 @@ class DictationTrayApp(QObject):
 
     def _trigger_hint(self) -> str:
         if self.mode == "push_to_talk":
-            return f"Hold {_pretty_key(self.ptt_name)} and talk"
-        return f"Tap {_pretty_key(self.toggle_name)} to talk"
+            return self.tr("hold_and_talk", key=_pretty_key(self.ptt_name))
+        return self.tr("tap_to_talk", key=_pretty_key(self.toggle_name))
 
     def _build_menu(self):
         menu = QMenu()
-        self.act_status = QAction("Loading model...")
+        self.act_status = QAction(self.tr("loading"))
         self.act_status.setEnabled(False)
         menu.addAction(self.act_status)
         self.act_hint = QAction(self._trigger_hint())
         self.act_hint.setEnabled(False)
         menu.addAction(self.act_hint)
-        self.act_stats = QAction("0 words · 0 WPM this session")
+        self.act_stats = QAction("0 words · 0 WPM")
         self.act_stats.setEnabled(False)
         menu.addAction(self.act_stats)
-        self.act_mode = QAction(f"Mode: {MODE_LABELS[self._dict_mode]}  ({_pretty_key(self.mode_cycle_name)} to cycle)")
+        self.act_mode = QAction(f"{self.tr('mode')}: {MODE_LABELS[self._dict_mode]}  ({_pretty_key(self.mode_cycle_name)} {self.tr('cycle_hint')})")
         self.act_mode.setEnabled(False)
         menu.addAction(self.act_mode)
         menu.addSeparator()
-        act_copy = QAction(f"Copy last dictation  ({_pretty_key(self.copy_name)})")
+        act_copy = QAction(f"{self.tr('copy_last')}  ({_pretty_key(self.copy_name)})")
         act_copy.triggered.connect(self._copy_last)
         menu.addAction(act_copy)
-        act_settings = QAction("Settings...")
+        act_settings = QAction(self.tr("settings"))
         act_settings.triggered.connect(self._open_settings)
         menu.addAction(act_settings)
-        act_history = QAction("History...")
+        act_history = QAction(self.tr("history"))
         act_history.triggered.connect(self._open_history)
         menu.addAction(act_history)
-        act_guide = QAction("How to use...")
+        act_guide = QAction(self.tr("guide"))
         act_guide.triggered.connect(self._open_guide)
         menu.addAction(act_guide)
         menu.addSeparator()
-        act_quit = QAction("Quit")
+        act_quit = QAction(self.tr("quit"))
         act_quit.triggered.connect(self._quit)
         menu.addAction(act_quit)
         self.tray.setContextMenu(menu)
@@ -293,10 +297,10 @@ class DictationTrayApp(QObject):
             return
         if self.recorder.paused:
             self.recorder.resume()
-            self.overlay.flash_toast("resumed")
+            self.overlay.flash_toast(self.tr("resumed"))
         else:
             self.recorder.pause()
-            self.overlay.flash_toast("paused")
+            self.overlay.flash_toast(self.tr("paused"))
 
     def _rerecord(self):
         """Delete the last dictation and immediately start recording again."""
@@ -314,9 +318,9 @@ class DictationTrayApp(QObject):
         items = self.history.items()
         if items:
             QApplication.clipboard().setText(items[0].text)
-            self.overlay.flash_toast("copied last dictation")
+            self.overlay.flash_toast(self.tr("copied_last"))
         else:
-            self.overlay.flash_toast("nothing dictated yet")
+            self.overlay.flash_toast(self.tr("nothing_yet"))
 
     def _open_guide(self):
         from .guide import GuideDialog
@@ -417,6 +421,15 @@ class DictationTrayApp(QObject):
         else:
             self.engine.hotwords = None
         self.engine.language = None if lang in ("", "auto") else lang
+        # language change also swaps the punctuation lexicon + UI language
+        from .engine import _build_lexicon
+        self.engine.lexicon = _build_lexicon(self.engine.language)
+        from .i18n import Translator, resolve_ui_language
+        self.tr = Translator(resolve_ui_language(self.cfg))
+        # cleanup level hot-applies too
+        lvl = str(self.cfg.get("cleanup", {}).get("level", "standard")).strip().lower()
+        self.engine.cleanup_level = lvl if lvl in ("off", "light", "standard", "high") else "standard"
+        self._build_menu()
         self._set_state(self.state)
         # Apply overlay style change immediately
         vis_style = self.cfg.get("overlay", {}).get("style", "equalizer")
@@ -549,8 +562,9 @@ class DictationTrayApp(QObject):
     def _set_state(self, state: str):
         self.state = state
         self.tray.setIcon(_make_icon(STATE_COLOR[state]))
-        label = {LOADING: "Loading model...", IDLE: "Ready", RECORDING: "Listening...",
-                 TRANSCRIBING: "Transcribing..."}[state]
+        label = {LOADING: self.tr("loading"), IDLE: self.tr("ready"),
+                 RECORDING: self.tr("listening"),
+                 TRANSCRIBING: self.tr("transcribing")}[state]
         dev = f" on {self.engine.active_device}" if self.engine.active_device else ""
         # AMD GPU note — cached at init so we don't spawn wmic on every state change
         amd_note = ""
@@ -567,8 +581,9 @@ class DictationTrayApp(QObject):
     def _on_model_ready(self, device: str):
         self._set_state(IDLE)
         self.tray.showMessage(
-            "Dictate ready",
-            f"{self.engine.model_size} on {device}. {self._trigger_hint()}.",
+            self.tr("ready_title"),
+            self.tr("ready_balloon", model=self.engine.model_size,
+                    device=device, hint=self._trigger_hint()),
             QSystemTrayIcon.Information, 4000)
         # Crash recovery: tell the user what happened last run (once, after
         # the ready balloon) and record what device this run uses so the
@@ -583,7 +598,7 @@ class DictationTrayApp(QObject):
             self._recovery_note = None
             from PySide6.QtCore import QTimer
             QTimer.singleShot(4500, lambda: self.tray.showMessage(
-                "Dictate — recovered from a crash", note,
+                self.tr("crash_title"), note,
                 QSystemTrayIcon.Warning, 10000))
         # Update check: throttled (max ~1 HTTP call/day), fail-silent,
         # runs off the GUI thread. Result crosses back via signal.
@@ -603,8 +618,8 @@ class DictationTrayApp(QObject):
     def _on_update_available(self, tag: str, url: str):
         self._update_url = url
         self.tray.showMessage(
-            "Dictate — update available",
-            f"Version {tag} is out. Click here to download.",
+            self.tr("update_title"),
+            self.tr("update_body", tag=tag),
             QSystemTrayIcon.Information, 10000)
         try:
             self.tray.messageClicked.disconnect(self._open_update_page)
@@ -623,9 +638,9 @@ class DictationTrayApp(QObject):
             # UX: pressing the hotkey during the ~7s model load used to do
             # NOTHING — the most common "is it broken?" moment. Say so.
             if self.state == LOADING:
-                self.overlay.flash_toast("still loading — ready in a moment")
+                self.overlay.flash_toast(self.tr("still_loading"))
             elif self.state == TRANSCRIBING:
-                self.overlay.flash_toast("finishing the last one…")
+                self.overlay.flash_toast(self.tr("finishing"))
             return False
         # If not in "auto" mode, the manual mode overrides per-app detection.
         # "code" forces verbatim (like a terminal profile).
@@ -747,7 +762,7 @@ class DictationTrayApp(QObject):
             self._transcribe_token += 1
             self.overlay.hide_overlay()
             self._set_state(IDLE)
-            self.overlay.flash_toast("that took too long — try a shorter take")
+            self.overlay.flash_toast(self.tr("too_long"))
 
     # push-to-talk
     def _on_ptt_start(self):
@@ -790,7 +805,7 @@ class DictationTrayApp(QObject):
         self._set_state(IDLE)
         if not text:
             # empty transcript = we heard nothing usable; don't fail silently
-            self.overlay.flash_toast("didn't catch that")
+            self.overlay.flash_toast(self.tr("didnt_catch"))
             return
 
         # If the result is ONLY whitespace/newlines (e.g. user said "novi red"
@@ -825,10 +840,18 @@ class DictationTrayApp(QObject):
         payload = text if text.endswith("\n") else text + " "
         how = win32_input.choose_injection(payload, mode=self.inject_mode,
                                            paste_threshold=self.paste_threshold)
+        delivered = True
         if how == "paste":
-            win32_input.inject_text_via_paste(payload)
+            delivered = win32_input.inject_text_via_paste(payload)
         else:
-            win32_input.inject_text_native_unicode(payload)
+            injected = win32_input.inject_text_native_unicode(payload)
+            delivered = not win32_input.injection_suspect(injected, len(payload))
+        if not delivered:
+            # Never lose a dictation: if the target window swallowed the
+            # input (elevated app, secure desktop, exclusive fullscreen),
+            # park the text on the clipboard and tell the user.
+            QApplication.clipboard().setText(text)
+            self.overlay.flash_toast(self.tr("inject_failed"), ms=4000)
         self.last_injected_len = len(payload)
         self.last_injected_text = payload
         n_words = len(re.findall(r"[\w']+", text))
@@ -837,12 +860,13 @@ class DictationTrayApp(QObject):
         # Context-aware undo hint: Ctrl+Z in a terminal sends EOF/SIGTSTP
         # (suspends the process), so show a different hint there.
         is_terminal = bool(self._rec_profile and self._rec_profile.get("verbatim"))
-        if is_terminal:
-            undo_hint = "say 'scratch that' to undo"
-        else:
-            undo_hint = "Ctrl+Z to undo"
-        self.overlay.flash_toast(
-            f"{n_words} word{'s' if n_words != 1 else ''} · {undo_hint}")
+        undo_hint = self.tr("undo_hint_term" if is_terminal else "undo_hint")
+        if delivered:
+            if n_words == 1:
+                self.overlay.flash_toast(self.tr("word_undo", undo=undo_hint))
+            else:
+                self.overlay.flash_toast(
+                    self.tr("words_undo", n=n_words, undo=undo_hint))
         # Continuous mode: auto-restart recording after a brief pause
         if self.mode == "continuous" and not getattr(self, "_continuous_stop", False):
             from PySide6.QtCore import QTimer
@@ -854,7 +878,7 @@ class DictationTrayApp(QObject):
             win32_input.inject_backspaces(self.last_injected_len)
             self.last_injected_len = 0
             self.last_injected_text = ""
-            self.overlay.flash_toast("scratched")
+            self.overlay.flash_toast(self.tr("scratched"))
             return
         if cmd.kind == "delete_words":
             back = voice_commands.tail_word_len(self.last_injected_text, cmd.n)
@@ -871,7 +895,7 @@ class DictationTrayApp(QObject):
         if cmd.kind == "recase":
             old = self.last_injected_text
             if not old.strip():
-                self.overlay.flash_toast("nothing to change")
+                self.overlay.flash_toast(self.tr("nothing_to_change"))
                 return
             trailing = old[len(old.rstrip()):]
             new = voice_commands.apply_recase(old.rstrip(), cmd.mode) + trailing
@@ -891,7 +915,7 @@ class DictationTrayApp(QObject):
         if cmd.kind == "redo_verbatim":
             raw = self.last_raw_text
             if not raw.strip():
-                self.overlay.flash_toast("nothing to redo")
+                self.overlay.flash_toast(self.tr("nothing_to_redo"))
                 return
             # Backspace the last injection, re-inject the raw words as-is
             if self.last_injected_len > 0:
@@ -905,7 +929,7 @@ class DictationTrayApp(QObject):
                 win32_input.inject_text_native_unicode(payload)
             self.last_injected_text = payload
             self.last_injected_len = len(payload)
-            self.overlay.flash_toast("redone verbatim")
+            self.overlay.flash_toast(self.tr("redone"))
             return
         if cmd.kind == "delete_sentence":
             # Delete from the last sentence boundary (. ! ? \n) to the end
@@ -932,7 +956,7 @@ class DictationTrayApp(QObject):
                 win32_input.inject_backspaces(to_delete)
                 self.last_injected_text = text[:len(text) - to_delete]
                 self.last_injected_len = len(self.last_injected_text)
-            self.overlay.flash_toast("deleted last sentence")
+            self.overlay.flash_toast(self.tr("deleted_sentence"))
             return
         if cmd.kind == "format":
             if cmd.mode == "select_all":
@@ -943,7 +967,7 @@ class DictationTrayApp(QObject):
                     win32_input._vk_event(0x41, win32_input.KEYEVENTF_KEYUP),
                     win32_input._vk_event(win32_input.VK_CONTROL, win32_input.KEYEVENTF_KEYUP),
                 ])
-                self.overlay.flash_toast("selected all")
+                self.overlay.flash_toast(self.tr("selected_all"))
                 return
             old = self.last_injected_text
             if not old.strip():
@@ -1009,6 +1033,8 @@ class DictationTrayApp(QObject):
         elif "cuda" in low or "gpu" in low or "device" in low:
             friendly = "GPU failed — fell back to CPU"
         if friendly:
+            if "microphone" in friendly:
+                friendly = self.tr("no_mic")
             self.overlay.flash_toast(friendly)
         self.tray.showMessage("Dictate error", msg, QSystemTrayIcon.Critical, 5000)
 

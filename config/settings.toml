@@ -63,6 +63,12 @@ enabled = "auto"                 # "auto" | true | false
 
 [cleanup]
 remove_fillers = true            # strip "um", "uh", "erm", ...
+level = "standard"               # off | light | standard | high
+                                 # off: exactly what you said, spacing fixed only
+                                 # light: filler words removed, nothing else touched
+                                 # standard: fillers + dictionary + casing (default)
+                                 # high: standard + AI grammar polish when a local
+                                 # Ollama server is available
 custom_fillers = []              # YOUR extra filler words to strip, on top of the
                                  # built-in um/uh/erm list. e.g.
                                  # custom_fillers = ["like", "you know", "basically"]
@@ -114,6 +120,12 @@ style = "equalizer"              # equalizer | blob
                                  # equalizer: clean grey bars (minimal, professional)
                                  # blob: morphing colour-shifting orb that reacts to
                                  # pitch and volume (impossible to miss)
+
+[ui]
+language = "auto"                # auto | en | bs
+                                 # Language of the tray menu and notifications.
+                                 # auto: follows the dictation language, so
+                                 # Bosnian dictation gets a Bosnian interface.
 
 # ---- context-aware per-app formatting --------------------------------------
 # Dictate looks at which app has focus when you start talking and adapts.

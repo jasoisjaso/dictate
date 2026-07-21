@@ -6,7 +6,7 @@
   #define Variant "gpu"
 #endif
 #define AppName "Dictate"
-#define AppVersion "1.2.1"
+#define AppVersion "1.3.0"
 #define AppExe "Dictate.exe"
 
 [Setup]
@@ -26,11 +26,13 @@ Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=..\assets\dictate.ico
+InfoBeforeFile=quickstart.txt
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#AppExe}
 
 [Files]
 Source: "..\build\dictate_launcher.dist\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+Source: "quickstart.txt"; DestDir: "{app}"; DestName: "QuickStart.txt"
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"

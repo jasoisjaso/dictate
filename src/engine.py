@@ -8,10 +8,10 @@ import numpy as np
 
 log = logging.getLogger("dictate.engine")
 
-# Spoken phrase -> replacement. Order matters: longest phrases first so
-# "new paragraph" wins over "new line"-style partial hits.
-PUNCTUATION_LEXICON = [
-    # Multi-word phrases MUST come before single-word (longest first)
+# Spoken phrase -> replacement, English. Language packs (lang_bs) are merged
+# in per-engine by _build_lexicon(). Sorted longest-first at build time so
+# "new paragraph" always wins over partial hits.
+PUNCTUATION_EN = [
     ("new paragraph", "\n\n"),
     ("bullet point", "\n\u2022 "),
     ("exclamation mark", "!"),
@@ -21,27 +21,29 @@ PUNCTUATION_LEXICON = [
     ("close parenthesis", ")"),
     ("full stop", "."),
     ("new line", "\n"),
-    # Bosnian multi-word (must come before single-word tačka, zarez, etc.)
-    ("tačka-zarez", ";"),
-    ("novi red", "\n"),
-    ("novi pasus", "\n\n"),
-    ("otvorena zagrada", "("),
-    ("zatvorena zagrada", ")"),
-    ("trotačka", "…"),
-    # Single-word entries
     ("semicolon", ";"),
     ("period", "."),
     ("comma", ","),
     ("colon", ":"),
-    # Bosnian single-word
-    ("tačka", "."),
-    ("zarez", ","),
-    ("upitnik", "?"),
-    ("uzvičnik", "!"),
-    ("dvotačka", ":"),
-    ("navodnici", '"'),
-    ("crta", "—"),
 ]
+
+
+def _build_lexicon(language: str | None) -> list[tuple[str, str]]:
+    """English entries always; Bosnian pack when language is bs/hr/sr or
+    auto (mixed-language use). Longest-first so multi-word phrases win."""
+    entries = list(PUNCTUATION_EN)
+    if language is None or language in ("bs", "hr", "sr"):
+        try:
+            from . import lang_bs
+        except ImportError:
+            import lang_bs
+        entries += lang_bs.PUNCTUATION
+    entries.sort(key=lambda e: len(e[0]), reverse=True)
+    return entries
+
+
+# Backwards-compatible default (tests and post_process fallback)
+PUNCTUATION_LEXICON = _build_lexicon(None)
 
 _NO_SPACE_BEFORE = ".,?!:;)"
 
@@ -67,10 +69,31 @@ class WhisperTranscriber:
             self.model_size, self.device, self.compute_type = want_size, want_dev, want_ct
         lang = w.get("language", "en")
         self.language = None if lang in ("", "auto") else lang
+        self.lexicon = _build_lexicon(self.language)
         self.beam_size = int(w.get("beam_size", 5))
         self.initial_prompt = w.get("initial_prompt", "") or None
+        # Bosnian anchor: when dictating bs/hr/sr and the user has no custom
+        # prompt, anchor Whisper to ijekavian orthography with diacritics.
+        # Disable with [whisper] bs_anchor = false.
+        if (self.initial_prompt is None
+                and self.language in ("bs", "hr", "sr")
+                and bool(w.get("bs_anchor", True))):
+            try:
+                from . import lang_bs
+            except ImportError:
+                import lang_bs
+            self.initial_prompt = lang_bs.ANCHOR_PROMPT
         cl = cfg.get("cleanup", {})
         self.remove_fillers = bool(cl.get("remove_fillers", True))
+        # Cleanup level: off | light | standard | high.
+        #   off      = words exactly as transcribed (spacing fixed only)
+        #   light    = fillers stripped + dictionary, no casing/transforms
+        #   standard = today's default behaviour
+        #   high     = standard + Ollama polish forced on when reachable
+        level = str(cl.get("level", "standard")).strip().lower()
+        if level not in ("off", "light", "standard", "high"):
+            level = "standard"
+        self.cleanup_level = level
         # Custom filler list: built-in defaults + the user's own words.
         # `custom_fillers` is a list of strings in [cleanup]; single-word or
         # multi-word ("you know") are both fine. Merged case-insensitively.
@@ -93,6 +116,7 @@ class WhisperTranscriber:
                                    if isinstance(raw_polish, str)
                                    else ("on" if raw_polish else "off"))
         self.ollama_polish = self.ollama_polish_mode == "on"
+        self.ollama_available = False  # resolved in load()
         self.ollama_model = cl.get("ollama_model", "hermes4")
         self.ollama_endpoint = cl.get("ollama_endpoint", "http://127.0.0.1:11434")
         self.dictionary = {str(k): str(v)
@@ -165,10 +189,14 @@ class WhisperTranscriber:
                                                    self.ollama_endpoint)
                 if picked:
                     self.ollama_model = picked
+                    self.ollama_available = True
                     self.ollama_polish = True
                     log.info("ollama polish auto-enabled (model=%s)", picked)
             else:
                 log.info("ollama not reachable — polish stays off")
+        elif self.ollama_polish:
+            # forced on: trust the config, mark available for level=high
+            self.ollama_available = True
         # Warm up: run a 1s dummy transcription so CUDA kernels are compiled
         # and memory is pre-allocated. First real dictation will be instant.
         try:
@@ -253,7 +281,14 @@ class WhisperTranscriber:
         except ImportError:
             import cleanup as _cleanup
         short_take = audio_data.size < 16000 * 2.2  # < ~2.2 s at 16 kHz
-        if short_take and _cleanup.is_probable_hallucination(text):
+        extra_hall = None
+        if self.language is None or self.language in ("bs", "hr", "sr"):
+            try:
+                from . import lang_bs
+            except ImportError:
+                import lang_bs
+            extra_hall = lang_bs.HALLUCINATIONS
+        if short_take and _cleanup.is_probable_hallucination(text, extra_hall):
             log.info("dropping probable silence hallucination: %r", text)
             return ""
         log.debug("raw transcript: %r", text)
@@ -321,7 +356,7 @@ class WhisperTranscriber:
         self._has_punctuation_payload = False
         self._last_punct_payload = ""
         self._punct_command_fired = False
-        for phrase, repl in PUNCTUATION_LEXICON:
+        for phrase, repl in getattr(self, "lexicon", PUNCTUATION_LEXICON):
             # eat punctuation whisper may have attached to the spoken keyword
             before = text
             text = re.sub(
@@ -337,7 +372,8 @@ class WhisperTranscriber:
         if not after_punct_words and text:
             self._has_punctuation_payload = True
             self._last_punct_payload = text
-        if verbatim:
+        level = getattr(self, "cleanup_level", "standard")
+        if verbatim or level == "off":
             # terminals and editors get the words untouched: no filler
             # stripping, no sentence casing, no trailing-period logic
             return self._fix_spacing(text).strip(" ")
@@ -348,6 +384,10 @@ class WhisperTranscriber:
         text = _cleanup.clean(text, remove_fillers=self.remove_fillers,
                               dictionary=self.dictionary,
                               filler_re=self.filler_re)
+        if level == "light":
+            # fillers + dictionary only: the user's words, just tidier.
+            # No transforms, no casing, no polish, no auto-punctuation.
+            return self._fix_spacing(text).strip(" ")
         # Apply user-defined regex transforms (e.g. "gonna" -> "going to")
         if self.transforms and not verbatim:
             try:
@@ -355,7 +395,11 @@ class WhisperTranscriber:
             except ImportError:
                 import transforms as _t
             text = _t.apply_transforms(text, self.transforms)
-        if self.ollama_polish:
+        # high forces the polish pass whenever a local Ollama is reachable;
+        # standard uses it only when the user/auto-probe enabled it
+        run_polish = self.ollama_polish or (level == "high"
+                                            and self.ollama_available)
+        if run_polish:
             text = _cleanup.ollama_polish(
                 text, self.ollama_model, self.ollama_endpoint,
                 tone=profile.get("tone"))

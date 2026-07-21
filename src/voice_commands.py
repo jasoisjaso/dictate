@@ -111,27 +111,17 @@ def parse(text: str) -> Command | None:
     if m:
         return Command("replace", old=m.group(1), new=m.group(2))
 
-    # Bosnian voice commands (ijekavian: posljednju, riječ, zamijeni)
-    if t in ("obriši to", "poništi to", "poništi"):
-        return Command("scratch")
-    if t in ("obriši posljednju riječ", "obriši riječ",
-             "obriši posljednju riječ"):
-        return Command("delete_words", n=1)
-    if t in ("obriši posljednju rečenicu", "obriši rečenicu"):
-        return Command("delete_sentence")
-    if t in ("obriši posljednje dvije riječi",):
-        return Command("delete_words", n=2)
-    if t in ("obriši posljednje tri riječi",):
-        return Command("delete_words", n=3)
-    # Bosnian formatting commands
-    if t in ("podebljaj", "podebljaj to"):
-        return Command("format", mode="bold")
-    if t in ("iskosi", "iskosi to", "kurziv"):
-        return Command("format", mode="italic")
-    if t in ("označi sve", "oznaci sve"):
-        return Command("format", mode="select_all")
-    # Bosnian replace: "zamijeni X sa Y" or "zamijeni X sa y"
-    m = re.fullmatch(r"zamijeni (.+?) sa (.+)", t)
+    # Bosnian voice commands come from the lang_bs voice pack (single
+    # source of truth; ijekavian plus ASCII fallbacks)
+    try:
+        from . import lang_bs
+    except ImportError:
+        import lang_bs
+    for utterance, kind, kwargs in lang_bs.COMMANDS:
+        if t == utterance:
+            return Command(kind, **kwargs)
+    # Bosnian replace: "zamijeni X sa Y" (also ekavian "zameni")
+    m = re.fullmatch(r"zam(?:ij|j)?eni (.+?) sa (.+)", t)
     if m:
         return Command("replace", old=m.group(1), new=m.group(2))
 

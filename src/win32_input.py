@@ -68,6 +68,14 @@ def configure_cuda_dll_search_paths():
     return registered
 
 
+def injection_suspect(sent: int, expected: int) -> bool:
+    """True when SendInput delivered fewer events than requested, the
+    classic sign of an elevated or secure target window swallowing input.
+    The caller then falls back to putting the text on the clipboard so the
+    dictation is never lost."""
+    return sent < expected
+
+
 def choose_injection(text: str, mode: str = "auto",
                      paste_threshold: int = 300) -> str:
     """'type' (SendInput per char) or 'paste' (clipboard + Ctrl+V).

@@ -14,19 +14,21 @@ FILLERS = [
     "um", "uh", "erm", "uhh", "umm", "er", "ah",
 ]
 
-# Bosnian/Croatian/Serbian hesitation sounds. ONLY pure hesitations belong
-# here. Words like "pa", "ma", "e", "ono", "znaci", "dakle" are REAL words
-# used constantly in normal Bosnian sentences — stripping them mangles long
-# dictations (words silently disappear mid-sentence). If a user wants those
-# gone they can add them via custom_fillers explicitly.
-FILLERS_BS = ["ovaj", "hm", "hmm", "mhm", "aha", "eee"]
+# Bosnian/Croatian/Serbian hesitation sounds live in lang_bs.FILLERS
+# (single source of truth for the Bosnian voice pack). Words like "pa",
+# "ma", "e", "ono", "znaci", "dakle" are REAL words used constantly in
+# normal Bosnian sentences and must never be stripped by default.
 
 
 def default_fillers(language: str | None = None) -> list[str]:
     """Built-in filler list appropriate for the configured language."""
     out = list(FILLERS)
     if (language or "").lower() in ("bs", "hr", "sr"):
-        out += FILLERS_BS
+        try:
+            from . import lang_bs
+        except ImportError:
+            import lang_bs
+        out += lang_bs.FILLERS
     return out
 
 # Phrases faster-whisper/Whisper confidently emits on silence or near-silent
@@ -46,17 +48,27 @@ _HALLUCINATION_PHRASES = frozenset({
 })
 
 
-def is_probable_hallucination(text: str) -> bool:
+def is_probable_hallucination(text: str, extra_phrases=None) -> bool:
     """True if `text` is almost certainly a silence hallucination (the whole
     transcript is a single known filler phrase). Only fires on WHOLE-string
-    matches so real short sentences ("Thank you, Sarah") are never dropped."""
+    matches so real short sentences ("Thank you, Sarah") are never dropped.
+    extra_phrases: additional language-specific phrases (lowercase ASCII)."""
     if not text:
         return True
-    norm = re.sub(r"[^a-z' ]", "", text.lower()).strip()
+    norm = re.sub(r"[^a-z' ]", "", _ascii_fold(text.lower())).strip()
     norm = re.sub(r"\s+", " ", norm)
     if not norm:
         return True  # nothing but whitespace/punctuation -> treat as empty
-    return norm in _HALLUCINATION_PHRASES
+    if norm in _HALLUCINATION_PHRASES:
+        return True
+    return bool(extra_phrases) and norm in extra_phrases
+
+
+_FOLD = str.maketrans("šđčćž", "sdccz")
+
+
+def _ascii_fold(text: str) -> str:
+    return text.translate(_FOLD)
 
 
 def _build_filler_re(words):

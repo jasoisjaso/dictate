@@ -1,0 +1,60 @@
+DICTATE - QUICK START
+
+WHAT IT IS
+Free offline dictation for Windows. Your voice never leaves this PC.
+No account, no subscription, no cloud.
+
+HOW TO USE
+1. After install, a green microphone icon appears in the system tray.
+2. Click into any text field (Notepad, email, browser, anything).
+3. Hold RIGHT CTRL, speak, release. Your words appear at the cursor.
+
+SPOKEN PUNCTUATION
+Say "period", "comma", "question mark", "new line" and the symbol
+is typed instead of the word.
+
+FIX MISTAKES BY VOICE
+Say "scratch that" on its own to delete the last dictation.
+Say "replace X with Y" to fix a word without touching the keyboard.
+
+SETTINGS
+Right-click the tray icon, then Settings. Pick your microphone,
+language, hotkey and cleanup level there.
+
+FIRST LAUNCH
+The first start downloads the speech model once (progress bar shown).
+After that everything works completely offline.
+
+----------------------------------------------------------------------
+
+BOSANSKI - BRZI POCETAK
+
+STA JE OVO
+Besplatno diktiranje za Windows koje radi bez interneta.
+Vas glas nikada ne napusta ovaj racunar. Bez naloga i bez pretplate.
+
+KAKO SE KORISTI
+1. Nakon instalacije, zelena ikona mikrofona se pojavi pored sata.
+2. Kliknite u bilo koje tekstualno polje.
+3. Drzite DESNI CTRL, govorite, pustite. Rijeci se pojavljuju
+   tamo gdje je kursor.
+
+IZGOVORENA INTERPUNKCIJA
+Recite "tacka", "zarez", "upitnik", "novi red" i znak se upisuje
+umjesto rijeci.
+
+ISPRAVKE GLASOM
+Recite "obrisi to" da obrisete zadnji diktat.
+Recite "zamijeni X sa Y" da ispravite rijec bez tastature.
+
+POSTAVKE
+Desni klik na ikonu pored sata, zatim Settings. Tu birate mikrofon,
+jezik (bosanski je podrzan) i tipku za diktiranje.
+
+SUCELJE NA BOSANSKOM
+Kada izaberete bosanski jezik diktiranja, meni i obavjestenja se
+automatski prebace na bosanski.
+
+PRVO POKRETANJE
+Prvi start preuzima model za prepoznavanje govora, samo jednom.
+Poslije toga sve radi potpuno bez interneta.
