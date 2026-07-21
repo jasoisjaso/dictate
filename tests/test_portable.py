@@ -9,7 +9,12 @@ import paths
 def test_not_portable_by_default():
     importlib.reload(paths)
     assert paths.is_portable() is False
-    assert "Data" not in paths.app_data_dir()
+    # the data dir must not be the portable Data/ folder next to the app.
+    # NOTE: substring checks are wrong here — Windows paths legitimately
+    # contain "AppData", which contains "Data".
+    d = paths.app_data_dir()
+    assert os.path.basename(d) != "Data"
+    assert d != os.path.join(paths.install_root(), "Data")
 
 
 def test_portable_marker_switches_to_data_dir(monkeypatch, tmp_path):
