@@ -279,7 +279,7 @@ All of these accept `"auto"` (default), `true` (force on) or `false` (force off)
 - VAD speech padding so word edges never get clipped
 - Bosnian dictation is anchored to ijekavian orthography with proper diacritics
 - Native crash net: CUDA/C++ crashes write a stack trace to crash.log, and the app tells you on the next start
-- Auto-update check (about once a day, silent): a tray notification appears when a newer version is out
+- Auto-update check (about once a day, silent): a tray notification appears when a newer version is out. You can also check manually any time: tray icon > Settings > About > Check for updates. The About tab shows the exact version you are running, and nothing opens or downloads without asking you first.
 
 ---
 
