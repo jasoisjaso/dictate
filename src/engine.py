@@ -68,7 +68,13 @@ class WhisperTranscriber:
         else:
             self.model_size, self.device, self.compute_type = want_size, want_dev, want_ct
         lang = w.get("language", "en")
-        self.language = None if lang in ("", "auto") else lang
+        # Synthetic modes ("auto"/"multi"/translate modes) are NOT real Whisper
+        # language codes — they configure detection behaviour and must never be
+        # passed to faster_whisper as-is (it raises ValueError on unknown codes,
+        # which crashed a whole take). self.language holds ONLY a real ISO code
+        # or None; the synthetic behaviour lives in the flags below.
+        _SYNTHETIC = ("", "auto", "multi", "bs2en", "en2bs")
+        self.language = None if lang in _SYNTHETIC else lang
         # Mixed mode: restricted auto-detect between English and the Bosnian
         # group. Whisper picks ONE language per transcription window, and if
         # a window is forced to "en" while the speech is Bosnian it silently

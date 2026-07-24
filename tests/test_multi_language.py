@@ -39,6 +39,21 @@ def test_multi_config_enables_restricted_detection():
     assert t.multi_langs == ("en", "bs", "hr", "sr")
 
 
+def test_synthetic_codes_never_leak_to_whisper():
+    """Regression: 'multi'/'bs2en'/'en2bs' are NOT real Whisper language
+    codes. If any reaches faster_whisper it raises ValueError and crashes
+    the whole take (the '"multi" is not a valid language code' bug). They
+    must always resolve self.language to None."""
+    for synthetic in ("multi", "bs2en", "en2bs", "auto", ""):
+        t = _make(synthetic)
+        assert t.language is None, f"{synthetic!r} leaked as {t.language!r}"
+
+
+def test_real_codes_pass_through():
+    for code in ("en", "bs", "hr", "sr", "de"):
+        assert _make(code).language == code
+
+
 def test_fixed_language_unchanged():
     t = _make("en")
     assert t.language == "en"
