@@ -69,6 +69,18 @@ class WhisperTranscriber:
             self.model_size, self.device, self.compute_type = want_size, want_dev, want_ct
         lang = w.get("language", "en")
         self.language = None if lang in ("", "auto") else lang
+        # Mixed mode: restricted auto-detect between English and the Bosnian
+        # group. Whisper picks ONE language per transcription window, and if
+        # a window is forced to "en" while the speech is Bosnian it silently
+        # TRANSLATES to English (a known Whisper trait). Mixed mode instead
+        # detects per take — and, in streaming, per chunk, so a long take
+        # that switches language mid-way comes out right from the switch's
+        # chunk onward. Restricting candidates to the user's real languages
+        # avoids the accuracy loss of full 100-language auto-detect.
+        self.multi_langs: tuple | None = None
+        if lang == "multi":
+            self.language = None
+            self.multi_langs = ("en", "bs", "hr", "sr")
         self.lexicon = _build_lexicon(self.language)
         self.beam_size = int(w.get("beam_size", 5))
         self.initial_prompt = w.get("initial_prompt", "") or None
@@ -253,6 +265,35 @@ class WhisperTranscriber:
             return 3
         return self.beam_size
 
+    def _pick_language(self, audio_data: np.ndarray) -> str | None:
+        """Language for THIS buffer.
+
+        Fixed language: returned as-is. Plain auto: None (Whisper detects,
+        all 100 languages). Mixed mode: detect, but only among multi_langs —
+        the highest-probability candidate from the user's own languages wins.
+        Falls back to plain detection on any error.
+        Caller must hold self._lock.
+        """
+        if self.language is not None:
+            return self.language
+        if not self.multi_langs:
+            return None
+        try:
+            _lang, _prob, all_probs = self._model.detect_language(
+                audio_data[: 16000 * 30])
+            best = None
+            for code, prob in all_probs:
+                if code in self.multi_langs and (best is None or prob > best[1]):
+                    best = (code, prob)
+            if best is not None:
+                log.info("mixed-mode language pick: %s (p=%.2f)",
+                         best[0], best[1])
+                return best[0]
+        except Exception as ex:
+            log.debug("restricted language detect failed (%s); "
+                      "falling back to full auto", ex)
+        return None
+
     def transcribe_audio_buffer(self, audio_data: np.ndarray,
                                 prev_text: str | None = None) -> str:
         """Raw transcription of a float32 mono 16 kHz buffer.
@@ -278,9 +319,10 @@ class WhisperTranscriber:
         # last syllable — the main source of "long sentences lose words".
         vad_params = dict(min_silence_duration_ms=500, speech_pad_ms=400)
         with self._lock:
+            lang = self._pick_language(audio_data)
             segments, _info = self._model.transcribe(
                 audio_data,
-                language=self.language,
+                language=lang,
                 task="transcribe",
                 beam_size=beam,
                 initial_prompt=prompt,
@@ -296,7 +338,7 @@ class WhisperTranscriber:
                          "without VAD filter", audio_data.size / 16000)
                 segments, _info = self._model.transcribe(
                     audio_data,
-                    language=self.language,
+                    language=lang,
                     task="transcribe",
                     beam_size=beam,
                     initial_prompt=prompt,
