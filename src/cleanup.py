@@ -164,3 +164,27 @@ def ollama_polish(text: str, model: str, endpoint: str,
     except Exception as ex:
         log.debug("ollama polish unavailable (%s); using raw text", ex)
         return text
+
+
+_TRANSLATE_PROMPT = (
+    "Translate the following dictated text to natural English. It may be "
+    "Bosnian, Croatian or Serbian, possibly mixed with English words. "
+    "Keep the meaning, tone and level of formality exactly. Do not add, "
+    "drop or summarise anything. Reply with ONLY the translation, no "
+    "quotes, no explanations.\n\nText: ")
+
+
+def ollama_translate_to_english(text: str, model: str, endpoint: str,
+                                timeout: float = 12.0) -> str | None:
+    """Translate dictated bs/hr/sr (or mixed) text to English via local
+    Ollama. Returns None on any failure so the caller can fall back --
+    a dictation must never be lost to a translation hiccup."""
+    if not text.strip():
+        return text
+    try:
+        out = _ollama_generate(_TRANSLATE_PROMPT + text, model, endpoint,
+                               timeout)
+        return out if out else None
+    except Exception as ex:
+        log.debug("ollama translate unavailable (%s)", ex)
+        return None

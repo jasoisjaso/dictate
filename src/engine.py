@@ -78,9 +78,26 @@ class WhisperTranscriber:
         # chunk onward. Restricting candidates to the user's real languages
         # avoids the accuracy loss of full 100-language auto-detect.
         self.multi_langs: tuple | None = None
+        # Translate mode: "bs2en" = speak Bosnian (or a mix), write English.
+        # Transcribes as spoken first (restricted detection, same as mixed
+        # mode), then translates non-English takes to English via the local
+        # Ollama. Whisper's own translate task is NOT used: large-v3-turbo
+        # (the default GPU model) was trained without the translation task
+        # and silently ignores it. Fail-open: if Ollama is unreachable the
+        # as-spoken text is delivered rather than nothing.
+        self.task = "transcribe"
+        self.translate_to_en = False
         if lang == "multi":
             self.language = None
             self.multi_langs = ("en", "bs", "hr", "sr")
+        elif lang == "bs2en":
+            self.language = None
+            self.multi_langs = ("en", "bs", "hr", "sr")
+            self.translate_to_en = True
+        # Set by transcribe_audio_buffer whenever a take/chunk detects a
+        # non-English language; post_process consumes and resets it so only
+        # takes that actually contained Bosnian go through the translator.
+        self._nonen_detected = False
         self.lexicon = _build_lexicon(self.language)
         self.beam_size = int(w.get("beam_size", 5))
         self.initial_prompt = w.get("initial_prompt", "") or None
@@ -320,10 +337,12 @@ class WhisperTranscriber:
         vad_params = dict(min_silence_duration_ms=500, speech_pad_ms=400)
         with self._lock:
             lang = self._pick_language(audio_data)
+            if lang not in (None, "en"):
+                self._nonen_detected = True
             segments, _info = self._model.transcribe(
                 audio_data,
                 language=lang,
-                task="transcribe",
+                task=self.task,
                 beam_size=beam,
                 initial_prompt=prompt,
                 hotwords=self.hotwords,
@@ -339,7 +358,7 @@ class WhisperTranscriber:
                 segments, _info = self._model.transcribe(
                     audio_data,
                     language=lang,
-                    task="transcribe",
+                    task=self.task,
                     beam_size=beam,
                     initial_prompt=prompt,
                     hotwords=self.hotwords,
@@ -388,7 +407,7 @@ class WhisperTranscriber:
             segments, _info = self._model.transcribe(
                 audio_data,
                 language=self.language,
-                task="transcribe",
+                task=self.task,
                 beam_size=1,
                 hotwords=self.hotwords,
                 vad_filter=False,
@@ -424,6 +443,37 @@ class WhisperTranscriber:
         if not text:
             return ""
         profile = profile or {}
+        # Speak-Bosnian-write-English: translate before any cleanup so the
+        # rest of the pipeline (fillers, casing, dictionary) works on the
+        # English text. Only fires when the take actually contained a
+        # non-English detection; pure English takes skip the round-trip.
+        # Fail-open: if Ollama can't translate, deliver the as-spoken text.
+        nonen = self._nonen_detected
+        self._nonen_detected = False
+        if getattr(self, "translate_to_en", False) and nonen:
+            try:
+                from . import cleanup as _cleanup_tr, device as _device_tr
+            except ImportError:
+                import cleanup as _cleanup_tr
+                import device as _device_tr
+            # Resolve (once) the fastest installed model for translation —
+            # this pass sits in the time-to-text path of every Bosnian take,
+            # so a small 3B model (~0.5s warm) beats the 14B polish model
+            # (20s+) by a mile.
+            if not getattr(self, "_translate_model", None):
+                self._translate_model = (
+                    _device_tr.ollama_pick_translate_model(self.ollama_endpoint)
+                    or self.ollama_model)
+                log.info("translate model: %s", self._translate_model)
+            translated = _cleanup_tr.ollama_translate_to_english(
+                text, self._translate_model, self.ollama_endpoint,
+                timeout=30.0)
+            if translated:
+                log.info("translated take to English (%d -> %d chars)",
+                         len(text), len(translated))
+                text = translated
+            else:
+                log.warning("translation unavailable — delivering as spoken")
         verbatim = bool(profile.get("verbatim"))
         # Track if the punctuation lexicon converted the whole input to
         # punctuation/newlines (e.g. user said just "tačka" or "novi red").

@@ -169,3 +169,35 @@ def ollama_pick_model(preferred: str,
         if cand in base:
             return base[cand]
     return names[0]
+
+
+def ollama_pick_translate_model(endpoint: str = "http://127.0.0.1:11434",
+                                timeout: float = 0.8) -> "str | None":
+    """Best installed Ollama model for the TRANSLATION pass, or None.
+
+    Unlike polish (where the user's preferred big model is fine because it
+    rarely fires), translation sits directly in the time-to-text path of
+    every Bosnian take, so small and fast wins: a 3B model translates
+    bs->en in about half a second warm, a 14B takes 20+ seconds. Smallest
+    capable instruct models first.
+    """
+    import json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(endpoint.rstrip("/") + "/api/tags",
+                                    timeout=timeout) as r:
+            names = [m.get("name", "") for m in
+                     json.loads(r.read()).get("models", [])]
+    except Exception:
+        return None
+    if not names:
+        return None
+    for cand in ("qwen2.5:3b", "llama3.2:3b", "llama3.2:1b", "gemma2:2b",
+                 "phi3.5:3.8b", "phi3.5", "llama3.2", "qwen2.5:7b",
+                 "dolphin3:8b", "qwen2.5", "hermes4"):
+        if cand in names:
+            return cand
+        base_match = [n for n in names if n.split(":")[0] == cand]
+        if base_match:
+            return base_match[0]
+    return names[0]
