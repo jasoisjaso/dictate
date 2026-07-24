@@ -120,3 +120,82 @@ def test_translate_returns_none_on_error():
     out = cleanup.ollama_translate_to_english(
         "tekst", "nomodel", "http://127.0.0.1:1", timeout=0.3)
     assert out is None
+
+
+# ---- en2bs (speak English, write Bosnian) -------------------------------
+
+def test_en2bs_config():
+    t = _make("en2bs")
+    assert t.translate_to_bs is True
+    assert t.translate_to_en is False
+    assert t.language is None
+    assert t.multi_langs == ("en", "bs", "hr", "sr")
+
+
+def test_en2bs_english_take_goes_through_translator(monkeypatch):
+    t = _make("en2bs")
+    monkeypatch.setattr(device, "ollama_pick_bs_translate_model",
+                        lambda *a, **k: "testmodel")
+    monkeypatch.setattr(cleanup, "ollama_translate_to_bosnian",
+                        lambda text, m, e, timeout=0: "prevedeni tekst")
+    t._en_detected = True
+    out = t.post_process("please send the report to the boss")
+    assert "prevedeni" in out.lower()
+
+
+def test_en2bs_bosnian_take_skips_translation(monkeypatch):
+    """A take already detected as Bosnian must not be re-translated."""
+    t = _make("en2bs")
+    called = {}
+
+    def fake(*a, **k):
+        called["yes"] = True
+        return "SHOULD NOT APPEAR"
+
+    monkeypatch.setattr(cleanup, "ollama_translate_to_bosnian", fake)
+    t._en_detected = False
+    t._nonen_detected = True
+    out = t.post_process("molim te posalji izvjestaj")
+    assert "SHOULD NOT APPEAR" not in out
+    assert "yes" not in called
+
+
+def test_en2bs_failure_falls_back_to_spoken(monkeypatch):
+    t = _make("en2bs")
+    monkeypatch.setattr(device, "ollama_pick_bs_translate_model",
+                        lambda *a, **k: "testmodel")
+    monkeypatch.setattr(cleanup, "ollama_translate_to_bosnian",
+                        lambda *a, **k: None)
+    t._en_detected = True
+    out = t.post_process("please send the report")
+    assert "report" in out.lower()
+
+
+def test_bs_translate_model_prefers_quality():
+    """en->bs must pick a quality model, not the fastest tiny one that
+    butchers Bosnian."""
+    import json
+    from unittest import mock
+
+    names = ["qwen2.5:3b", "gpt-oss:20b", "dolphin3:8b"]
+    payload = json.dumps({"models": [{"name": n} for n in names]}).encode()
+
+    class FakeResp:
+        def read(self):
+            return payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+        # gpt-oss:20b is the quality pick, NOT qwen2.5:3b (the speed pick)
+        assert device.ollama_pick_bs_translate_model() == "gpt-oss:20b"
+
+
+def test_bs_translate_returns_none_on_error():
+    out = cleanup.ollama_translate_to_bosnian(
+        "text", "nomodel", "http://127.0.0.1:1", timeout=0.3)
+    assert out is None

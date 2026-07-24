@@ -136,11 +136,14 @@ def clean(text: str, *, remove_fillers: bool,
 # ---- optional local-LLM polish (never blocks dictation) -----------------
 
 def _ollama_generate(prompt: str, model: str, endpoint: str,
-                     timeout: float) -> str:
+                     timeout: float, keep_alive: str = "10m") -> str:
     req = urllib.request.Request(
         endpoint.rstrip("/") + "/api/generate",
         data=json.dumps({"model": model, "prompt": prompt,
-                         "stream": False}).encode(),
+                         "stream": False,
+                         # keep the model resident between takes so only the
+                         # FIRST translation pays the load cost, not every one
+                         "keep_alive": keep_alive}).encode(),
         headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read()).get("response", "").strip()
@@ -183,6 +186,30 @@ def ollama_translate_to_english(text: str, model: str, endpoint: str,
         return text
     try:
         out = _ollama_generate(_TRANSLATE_PROMPT + text, model, endpoint,
+                               timeout)
+        return out if out else None
+    except Exception as ex:
+        log.debug("ollama translate unavailable (%s)", ex)
+        return None
+
+
+_TRANSLATE_BS_PROMPT = (
+    "Translate the following dictated text to natural Bosnian (ijekavian, "
+    "Latin script, with proper diacritics like č ć ž š đ). It may be "
+    "English, possibly mixed with Bosnian words. Keep the meaning, tone "
+    "and level of formality exactly. Do not add, drop or summarise "
+    "anything. Reply with ONLY the translation, no quotes, no "
+    "explanations.\n\nText: ")
+
+
+def ollama_translate_to_bosnian(text: str, model: str, endpoint: str,
+                                timeout: float = 12.0) -> str | None:
+    """Translate dictated English (or mixed) text to Bosnian via local
+    Ollama. Same fail-open contract as the English direction."""
+    if not text.strip():
+        return text
+    try:
+        out = _ollama_generate(_TRANSLATE_BS_PROMPT + text, model, endpoint,
                                timeout)
         return out if out else None
     except Exception as ex:

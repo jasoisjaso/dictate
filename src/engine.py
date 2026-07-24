@@ -87,6 +87,9 @@ class WhisperTranscriber:
         # as-spoken text is delivered rather than nothing.
         self.task = "transcribe"
         self.translate_to_en = False
+        # en2bs: the mirror image — speak English, write Bosnian. Same
+        # pipeline, opposite trigger: translation fires on ENGLISH takes.
+        self.translate_to_bs = False
         if lang == "multi":
             self.language = None
             self.multi_langs = ("en", "bs", "hr", "sr")
@@ -94,10 +97,16 @@ class WhisperTranscriber:
             self.language = None
             self.multi_langs = ("en", "bs", "hr", "sr")
             self.translate_to_en = True
+        elif lang == "en2bs":
+            self.language = None
+            self.multi_langs = ("en", "bs", "hr", "sr")
+            self.translate_to_bs = True
         # Set by transcribe_audio_buffer whenever a take/chunk detects a
         # non-English language; post_process consumes and resets it so only
         # takes that actually contained Bosnian go through the translator.
         self._nonen_detected = False
+        # Mirror flag for en2bs: set when a take/chunk detected English.
+        self._en_detected = False
         self.lexicon = _build_lexicon(self.language)
         self.beam_size = int(w.get("beam_size", 5))
         self.initial_prompt = w.get("initial_prompt", "") or None
@@ -234,6 +243,14 @@ class WhisperTranscriber:
         elif self.ollama_polish:
             # forced on: trust the config, mark available for level=high
             self.ollama_available = True
+        # Translate modes: pre-warm the translation model in the background so
+        # the FIRST dictation isn't the slow cold-load one. Especially matters
+        # for en->bs, whose quality model is heavy (~20s cold, ~5s warm).
+        if getattr(self, "translate_to_en", False) or \
+                getattr(self, "translate_to_bs", False):
+            import threading as _th
+            _th.Thread(target=self._prewarm_translate_model,
+                       daemon=True).start()
         # Warm up: run a 1s dummy transcription so CUDA kernels are compiled
         # and memory is pre-allocated. First real dictation will be instant.
         try:
@@ -282,11 +299,36 @@ class WhisperTranscriber:
             return 3
         return self.beam_size
 
+    def _prewarm_translate_model(self):
+        """Load the translation model into Ollama memory ahead of the first
+        dictation. Fire-and-forget: any failure is harmless (the real call
+        would just pay the cold-load cost instead)."""
+        try:
+            from . import cleanup as _cl, device as _dev
+        except ImportError:
+            import cleanup as _cl
+            import device as _dev
+        try:
+            if getattr(self, "translate_to_bs", False):
+                model = (_dev.ollama_pick_bs_translate_model(self.ollama_endpoint)
+                         or self.ollama_model)
+                self._translate_model_bs = model
+            else:
+                model = (_dev.ollama_pick_translate_model(self.ollama_endpoint)
+                         or self.ollama_model)
+                self._translate_model_en = model
+            if model:
+                _cl._ollama_generate("hi", model, self.ollama_endpoint,
+                                     timeout=120.0)
+                log.info("pre-warmed translate model %s", model)
+        except Exception as ex:
+            log.debug("translate model pre-warm skipped (%s)", ex)
+
     def _pick_language(self, audio_data: np.ndarray) -> str | None:
         """Language for THIS buffer.
 
         Fixed language: returned as-is. Plain auto: None (Whisper detects,
-        all 100 languages). Mixed mode: detect, but only among multi_langs —
+        all 100 languages). Mixed mode: detect, but only among multi_langs,
         the highest-probability candidate from the user's own languages wins.
         Falls back to plain detection on any error.
         Caller must hold self._lock.
@@ -339,6 +381,8 @@ class WhisperTranscriber:
             lang = self._pick_language(audio_data)
             if lang not in (None, "en"):
                 self._nonen_detected = True
+            if lang == "en" or lang is None:
+                self._en_detected = True
             segments, _info = self._model.transcribe(
                 audio_data,
                 language=lang,
@@ -450,26 +494,41 @@ class WhisperTranscriber:
         # Fail-open: if Ollama can't translate, deliver the as-spoken text.
         nonen = self._nonen_detected
         self._nonen_detected = False
-        if getattr(self, "translate_to_en", False) and nonen:
+        en_seen = self._en_detected
+        self._en_detected = False
+        want_en = getattr(self, "translate_to_en", False) and nonen
+        want_bs = getattr(self, "translate_to_bs", False) and en_seen
+        if want_en or want_bs:
             try:
                 from . import cleanup as _cleanup_tr, device as _device_tr
             except ImportError:
                 import cleanup as _cleanup_tr
                 import device as _device_tr
-            # Resolve (once) the fastest installed model for translation —
-            # this pass sits in the time-to-text path of every Bosnian take,
-            # so a small 3B model (~0.5s warm) beats the 14B polish model
-            # (20s+) by a mile.
-            if not getattr(self, "_translate_model", None):
-                self._translate_model = (
-                    _device_tr.ollama_pick_translate_model(self.ollama_endpoint)
-                    or self.ollama_model)
-                log.info("translate model: %s", self._translate_model)
-            translated = _cleanup_tr.ollama_translate_to_english(
-                text, self._translate_model, self.ollama_endpoint,
-                timeout=30.0)
+            if want_en:
+                # bs->en: fastest small model is fine, English output is easy
+                if not getattr(self, "_translate_model_en", None):
+                    self._translate_model_en = (
+                        _device_tr.ollama_pick_translate_model(
+                            self.ollama_endpoint) or self.ollama_model)
+                    log.info("bs->en translate model: %s",
+                             self._translate_model_en)
+                translated = _cleanup_tr.ollama_translate_to_english(
+                    text, self._translate_model_en, self.ollama_endpoint,
+                    timeout=30.0)
+            else:
+                # en->bs: quality-first model, small ones butcher Bosnian
+                if not getattr(self, "_translate_model_bs", None):
+                    self._translate_model_bs = (
+                        _device_tr.ollama_pick_bs_translate_model(
+                            self.ollama_endpoint) or self.ollama_model)
+                    log.info("en->bs translate model: %s",
+                             self._translate_model_bs)
+                translated = _cleanup_tr.ollama_translate_to_bosnian(
+                    text, self._translate_model_bs, self.ollama_endpoint,
+                    timeout=60.0)
             if translated:
-                log.info("translated take to English (%d -> %d chars)",
+                log.info("translated take to %s (%d -> %d chars)",
+                         "English" if want_en else "Bosnian",
                          len(text), len(translated))
                 text = translated
             else:

@@ -201,3 +201,35 @@ def ollama_pick_translate_model(endpoint: str = "http://127.0.0.1:11434",
         if base_match:
             return base_match[0]
     return names[0]
+
+
+def ollama_pick_bs_translate_model(endpoint: str = "http://127.0.0.1:11434",
+                                   timeout: float = 0.8) -> "str | None":
+    """Best installed Ollama model for translating INTO Bosnian.
+
+    The small models that are perfect for bs->en butcher Bosnian output
+    (broken words, ekavian drift). Measured on this hardware: qwen2.5:3b
+    and dolphin3:8b produce wrong words, hermes4:14b is excellent but
+    ~56s, gpt-oss:20b (MoE, few active params) is correct ijekavian at
+    ~7s warm. Quality-first order, since a Bosnian speaker instantly
+    spots bad Bosnian.
+    """
+    import json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(endpoint.rstrip("/") + "/api/tags",
+                                    timeout=timeout) as r:
+            names = [m.get("name", "") for m in
+                     json.loads(r.read()).get("models", [])]
+    except Exception:
+        return None
+    if not names:
+        return None
+    for cand in ("gpt-oss:20b", "gpt-oss", "qwen3:14b", "hermes4:14b",
+                 "hermes4", "cogito:14b", "qwen2.5:7b", "dolphin3:8b"):
+        if cand in names:
+            return cand
+        base_match = [n for n in names if n.split(":")[0] == cand]
+        if base_match:
+            return base_match[0]
+    return names[0]
