@@ -187,9 +187,46 @@ if IS_WINDOWS:
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
+    # ---- correct 64-bit prototypes -------------------------------------
+    # CRITICAL: without explicit restype, ctypes assumes every return value
+    # is a 32-bit C int. On 64-bit Windows, GetClipboardData / GlobalAlloc /
+    # GlobalLock return 64-bit HANDLEs/pointers — the silent truncation
+    # produced a garbage pointer and an access-violation HARD CRASH in
+    # wstring_at whenever the clipboard buffer lived above 4 GB. That killed
+    # the whole app mid-paste on long dictations (the >paste_threshold path)
+    # while short (typed) dictations never touched the clipboard.
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.CloseClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    user32.GetClipboardData.restype = wintypes.HANDLE
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = wintypes.LPVOID
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalFree.restype = wintypes.HGLOBAL
+    kernel32.GlobalSize.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalSize.restype = ctypes.c_size_t
+
+    def _open_clipboard(retries: int = 6, delay: float = 0.015) -> bool:
+        """OpenClipboard with a short retry — another process (clipboard
+        managers, the app we just pasted into) can hold it for a moment."""
+        import time as _time
+        for _ in range(retries):
+            if user32.OpenClipboard(None):
+                return True
+            _time.sleep(delay)
+        return False
+
     def _clipboard_get_text():
         """Current clipboard text, or None if empty/non-text (can't restore those)."""
-        if not user32.OpenClipboard(None):
+        if not _open_clipboard():
             return None
         try:
             h = user32.GetClipboardData(CF_UNICODETEXT)
@@ -199,7 +236,13 @@ if IS_WINDOWS:
             if not ptr:
                 return None
             try:
-                return ctypes.wstring_at(ptr)
+                # Bound the read by the actual allocation size instead of
+                # trusting a NUL terminator — never scan past the buffer.
+                n_chars = kernel32.GlobalSize(h) // 2
+                if n_chars == 0:
+                    return ""
+                raw = ctypes.wstring_at(ptr, n_chars)
+                return raw.split("\x00", 1)[0]
             finally:
                 kernel32.GlobalUnlock(h)
         finally:
@@ -211,9 +254,12 @@ if IS_WINDOWS:
         if not h:
             return False
         ptr = kernel32.GlobalLock(h)
+        if not ptr:
+            kernel32.GlobalFree(h)
+            return False
         ctypes.memmove(ptr, data, len(data))
         kernel32.GlobalUnlock(h)
-        if not user32.OpenClipboard(None):
+        if not _open_clipboard():
             kernel32.GlobalFree(h)
             return False
         try:
@@ -245,10 +291,31 @@ if IS_WINDOWS:
         """
         import threading as _threading
         import time as _time
-        old = _clipboard_get_text()
+        try:
+            old = _clipboard_get_text()
+        except Exception:
+            # a failed clipboard READ must never cost the user their
+            # dictation — skip restore and carry on with the paste
+            log.warning("clipboard read failed; skipping restore", exc_info=True)
+            old = None
         if old is None:
             log.info("clipboard had no restorable text; previous contents will be lost")
-        if not _clipboard_set_text(text_string):
+        # Set + VERIFY before pressing Ctrl+V: clipboard managers / Windows
+        # clipboard history can race us and win. Pasting with the wrong thing
+        # on the clipboard would inject the user's OLD clipboard instead of
+        # the dictation — verify (and retry) so Ctrl+V only ever fires with
+        # our text actually on the clipboard.
+        placed = False
+        for attempt in range(3):
+            if _clipboard_set_text(text_string):
+                try:
+                    if _clipboard_get_text() == text_string:
+                        placed = True
+                        break
+                except Exception:
+                    pass
+            _time.sleep(0.03)
+        if not placed:
             log.error("could not write clipboard; falling back to typed injection")
             inject_text_native_unicode(text_string)
             return False
@@ -263,10 +330,13 @@ if IS_WINDOWS:
         if old is not None:
             def _restore():
                 _time.sleep(restore_delay)
-                # if the user copied something themselves in the window, don't
-                # stomp it — only restore if our text is still on the clipboard
-                if _clipboard_get_text() == text_string:
-                    _clipboard_set_text(old)
+                try:
+                    # if the user copied something themselves in the window,
+                    # don't stomp it — only restore if our text is still there
+                    if _clipboard_get_text() == text_string:
+                        _clipboard_set_text(old)
+                except Exception:
+                    log.warning("clipboard restore failed", exc_info=True)
             _threading.Thread(target=_restore, daemon=True).start()
         return True
 

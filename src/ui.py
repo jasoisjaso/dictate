@@ -841,11 +841,15 @@ class DictationTrayApp(QObject):
         how = win32_input.choose_injection(payload, mode=self.inject_mode,
                                            paste_threshold=self.paste_threshold)
         delivered = True
-        if how == "paste":
-            delivered = win32_input.inject_text_via_paste(payload)
-        else:
-            injected = win32_input.inject_text_native_unicode(payload)
-            delivered = not win32_input.injection_suspect(injected, len(payload))
+        try:
+            if how == "paste":
+                delivered = win32_input.inject_text_via_paste(payload)
+            else:
+                injected = win32_input.inject_text_native_unicode(payload)
+                delivered = not win32_input.injection_suspect(injected, len(payload))
+        except Exception:
+            log.exception("text injection raised — falling back to clipboard")
+            delivered = False
         if not delivered:
             # Never lose a dictation: if the target window swallowed the
             # input (elevated app, secure desktop, exclusive fullscreen),
