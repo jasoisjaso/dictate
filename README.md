@@ -2,9 +2,11 @@
 
 Talk instead of type, in any Windows app. Hold a key, speak, and your words appear where your cursor is. Everything runs on your own PC: no cloud, no account, no subscription, and your voice never leaves your machine.
 
+Govorite umjesto da kucate, u bilo kojem Windows programu. Držite tipku, pričajte, i vaše riječi se pojave gdje vam je kursor. Sve radi na vašem računaru: bez clouda, bez naloga, bez pretplate, i vaš glas nikad ne napušta vašu mašinu. Cijelo uputstvo na bosanskom je u sekciji [Bosanski](#bosanski) ispod.
+
 Built on OpenAI's Whisper (via [faster-whisper](https://github.com/SYSTRAN/faster-whisper)), with the polish free tools usually skip: voice commands, per-app profiles, cleanup levels, a personal dictionary, automatic hardware tuning, and a settings window a non-technical person can actually use.
 
-Full Bosnian language support: spoken punctuation, voice commands, and an interface that can run entirely in Bosnian. Skip to the [Bosanski](#bosanski) section below.
+Full Bosnian language support: spoken punctuation, voice commands, and an interface that can run entirely in Bosnian. Puna podrška za bosanski jezik: izgovorena interpunkcija, glasovne komande, i interfejs koji može raditi u potpunosti na bosanskom.
 
 ## Quick Start (3 steps)
 
