@@ -420,7 +420,7 @@ class DictationTrayApp(QObject):
             self.engine.hotwords = ", ".join(terms)
         else:
             self.engine.hotwords = None
-        self.engine.language = None if lang in ("", "auto") else lang
+        self.engine.apply_language(lang)
         # language change also swaps the punctuation lexicon + UI language
         from .engine import _build_lexicon
         self.engine.lexicon = _build_lexicon(self.engine.language)
@@ -429,6 +429,17 @@ class DictationTrayApp(QObject):
         # cleanup level hot-applies too
         lvl = str(self.cfg.get("cleanup", {}).get("level", "standard")).strip().lower()
         self.engine.cleanup_level = lvl if lvl in ("off", "light", "standard", "high") else "standard"
+        # auto-punctuation + casing hot-apply: previously these only took
+        # effect after a full restart, so ticking the box in Settings did
+        # nothing to the running engine (the "Gmail has no full stops" bug).
+        pp = self.cfg.get("post_processing", {})
+        raw_ap = pp.get("auto_punctuation", "auto")
+        if isinstance(raw_ap, str) and raw_ap.strip().lower() == "auto":
+            self.engine.auto_punctuation = self.engine.model_size in (
+                "tiny", "base", "small")
+        else:
+            self.engine.auto_punctuation = bool(raw_ap)
+        self.engine.casing = pp.get("casing", "sentence")
         self._build_menu()
         self._set_state(self.state)
         # Apply overlay style change immediately

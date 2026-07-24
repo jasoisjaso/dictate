@@ -68,51 +68,7 @@ class WhisperTranscriber:
         else:
             self.model_size, self.device, self.compute_type = want_size, want_dev, want_ct
         lang = w.get("language", "en")
-        # Synthetic modes ("auto"/"multi"/translate modes) are NOT real Whisper
-        # language codes — they configure detection behaviour and must never be
-        # passed to faster_whisper as-is (it raises ValueError on unknown codes,
-        # which crashed a whole take). self.language holds ONLY a real ISO code
-        # or None; the synthetic behaviour lives in the flags below.
-        _SYNTHETIC = ("", "auto", "multi", "bs2en", "en2bs")
-        self.language = None if lang in _SYNTHETIC else lang
-        # Mixed mode: restricted auto-detect between English and the Bosnian
-        # group. Whisper picks ONE language per transcription window, and if
-        # a window is forced to "en" while the speech is Bosnian it silently
-        # TRANSLATES to English (a known Whisper trait). Mixed mode instead
-        # detects per take — and, in streaming, per chunk, so a long take
-        # that switches language mid-way comes out right from the switch's
-        # chunk onward. Restricting candidates to the user's real languages
-        # avoids the accuracy loss of full 100-language auto-detect.
-        self.multi_langs: tuple | None = None
-        # Translate mode: "bs2en" = speak Bosnian (or a mix), write English.
-        # Transcribes as spoken first (restricted detection, same as mixed
-        # mode), then translates non-English takes to English via the local
-        # Ollama. Whisper's own translate task is NOT used: large-v3-turbo
-        # (the default GPU model) was trained without the translation task
-        # and silently ignores it. Fail-open: if Ollama is unreachable the
-        # as-spoken text is delivered rather than nothing.
-        self.task = "transcribe"
-        self.translate_to_en = False
-        # en2bs: the mirror image — speak English, write Bosnian. Same
-        # pipeline, opposite trigger: translation fires on ENGLISH takes.
-        self.translate_to_bs = False
-        if lang == "multi":
-            self.language = None
-            self.multi_langs = ("en", "bs", "hr", "sr")
-        elif lang == "bs2en":
-            self.language = None
-            self.multi_langs = ("en", "bs", "hr", "sr")
-            self.translate_to_en = True
-        elif lang == "en2bs":
-            self.language = None
-            self.multi_langs = ("en", "bs", "hr", "sr")
-            self.translate_to_bs = True
-        # Set by transcribe_audio_buffer whenever a take/chunk detects a
-        # non-English language; post_process consumes and resets it so only
-        # takes that actually contained Bosnian go through the translator.
-        self._nonen_detected = False
-        # Mirror flag for en2bs: set when a take/chunk detected English.
-        self._en_detected = False
+        self.apply_language(lang)
         self.lexicon = _build_lexicon(self.language)
         self.beam_size = int(w.get("beam_size", 5))
         self.initial_prompt = w.get("initial_prompt", "") or None
@@ -195,6 +151,37 @@ class WhisperTranscriber:
         self.active_device = None
         self._has_punctuation_payload = False
         self._last_punct_payload = ""
+
+    def apply_language(self, lang: str):
+        """Resolve a language SETTING (which may be a synthetic mode name)
+        into the engine's real state. Called from __init__ AND from the
+        hot-apply path in ui.py, so both go through identical logic.
+
+        Synthetic modes ("auto"/"multi"/translate modes) are NOT real Whisper
+        language codes. If one reaches faster_whisper.transcribe(language=...)
+        it raises ValueError and aborts the whole take (the "'multi' is not a
+        valid language code" crash). self.language therefore holds ONLY a real
+        ISO code or None; the synthetic behaviour lives in the flags set here.
+        """
+        _SYNTHETIC = ("", "auto", "multi", "bs2en", "en2bs")
+        self.language = None if lang in _SYNTHETIC else lang
+        # Mixed / translate modes restrict detection to the user's real
+        # languages (en/bs/hr/sr) instead of full 100-language auto-detect.
+        self.multi_langs: tuple | None = None
+        self.task = "transcribe"
+        self.translate_to_en = False
+        self.translate_to_bs = False
+        if lang == "multi":
+            self.multi_langs = ("en", "bs", "hr", "sr")
+        elif lang == "bs2en":
+            self.multi_langs = ("en", "bs", "hr", "sr")
+            self.translate_to_en = True
+        elif lang == "en2bs":
+            self.multi_langs = ("en", "bs", "hr", "sr")
+            self.translate_to_bs = True
+        # a fixed real code is never re-detected; clear cached picks
+        self._nonen_detected = False
+        self._en_detected = False
 
     def load(self):
         """Load the model and warm it up with a dummy transcription."""

@@ -54,6 +54,21 @@ def test_real_codes_pass_through():
         assert _make(code).language == code
 
 
+def test_apply_language_hot_swap_never_leaks_synthetic():
+    """The hot-apply path (Settings > Save without restart) must resolve
+    synthetic modes the same as __init__. Regression for the crash where
+    changing language in Settings leaked 'multi' onto the live engine."""
+    t = _make("en")
+    for synthetic in ("multi", "bs2en", "en2bs", "auto", ""):
+        t.apply_language(synthetic)
+        assert t.language is None, f"{synthetic!r} leaked as {t.language!r}"
+    # switching to a real code and back works cleanly
+    t.apply_language("bs")
+    assert t.language == "bs" and t.multi_langs is None
+    t.apply_language("multi")
+    assert t.language is None and t.multi_langs == ("en", "bs", "hr", "sr")
+
+
 def test_fixed_language_unchanged():
     t = _make("en")
     assert t.language == "en"

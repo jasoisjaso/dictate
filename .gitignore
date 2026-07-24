@@ -23,18 +23,17 @@ models/
 .DS_Store
 Thumbs.db
 
-# internal planning docs (not for public repo)
+# internal planning / private docs (not for public repo)
 .hermes/
-docs/hardening-audit.md
-docs/ux-and-youtube-research.md
-docs/v2-improvement-plan.md
-docs/youtube-production-guide.md
-docs/youtube-video-guide.md
+docs/*-audit.md
+docs/*-plan.md
+docs/*-research.md
+docs/*-guide.md
 
-# temp/build scripts
+# local build helper scripts
 run_iscc.bat
+*_cu_test.py
 
-# stray dev files
+# stray dev notes
 google research.md
-C:UsersJasoDesktop_cu_test.py
 portable/
