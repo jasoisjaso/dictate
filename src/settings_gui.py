@@ -101,6 +101,7 @@ class SettingsDialog(QDialog):
     overlay after a successful save so the tray app can hot-apply."""
     saved = Signal(dict)
     _mic_result_ready = Signal(str)
+    _update_check_done = Signal(str, str, str)  # status, tag, url
 
     def __init__(self, cfg: dict, first_run: bool = False, parent=None,
                  engine=None, app_state=None):
@@ -390,6 +391,32 @@ class SettingsDialog(QDialog):
         v4.addStretch(1)
         self.tabs.addTab(tab4, "Advanced")
 
+        # ═══════════════ TAB 5: About ═══════════════
+        tab5 = QWidget()
+        v5 = QVBoxLayout(tab5)
+        v5.setContentsMargins(6, 6, 6, 6)
+        from . import version as _version
+        g_about = QGroupBox("About Dictate")
+        f5 = QFormLayout(g_about)
+        self._lbl_version = QLabel(f"v{_version.__version__}")
+        f5.addRow("Installed version:", self._lbl_version)
+        self._lbl_update_status = QLabel("Not checked yet this session.")
+        self._lbl_update_status.setWordWrap(True)
+        f5.addRow("Latest release:", self._lbl_update_status)
+        self._btn_check_update = QPushButton("Check for updates")
+        self._btn_check_update.clicked.connect(self._check_updates_clicked)
+        f5.addRow("", self._btn_check_update)
+        v5.addWidget(g_about)
+        note = QLabel(
+            "Checks the GitHub releases page for jasoisjaso/dictate. "
+            "Nothing is sent except the request itself. If a newer version "
+            "exists you will be asked before anything opens.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: gray;")
+        v5.addWidget(note)
+        v5.addStretch(1)
+        self.tabs.addTab(tab5, "About")
+
         # --- Buttons (always visible at bottom) ---
         btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         btns.accepted.connect(self._save)
@@ -397,6 +424,53 @@ class SettingsDialog(QDialog):
         outer.addWidget(btns)
         # Wire the mic test result signal
         self._mic_result_ready.connect(self._mic_test_done)
+        self._update_check_done.connect(self._update_check_finished)
+
+    # ---- update check (About tab) ---------------------------------------
+
+    def _check_updates_clicked(self):
+        """Manual update check. Network runs off the GUI thread; the result
+        crosses back via _update_check_done."""
+        import threading
+        self._btn_check_update.setEnabled(False)
+        self._btn_check_update.setText("Checking...")
+        self._lbl_update_status.setText("Contacting GitHub...")
+
+        def _worker():
+            from . import update_check, version
+            status, upd = update_check.check_now(
+                "jasoisjaso/dictate", version.__version__)
+            tag = upd.tag if upd else ""
+            url = upd.url if upd else ""
+            self._update_check_done.emit(status, tag, url)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _update_check_finished(self, status: str, tag: str, url: str):
+        from . import version as _version
+        self._btn_check_update.setEnabled(True)
+        self._btn_check_update.setText("Check for updates")
+        if status == "latest":
+            self._lbl_update_status.setText(
+                f"You are on the latest version (v{_version.__version__}).")
+            return
+        if status == "error":
+            self._lbl_update_status.setText(
+                "Could not reach GitHub. Check your internet connection "
+                "and try again.")
+            return
+        # status == "update": ask before opening anything
+        self._lbl_update_status.setText(f"{tag} is available.")
+        from PySide6.QtWidgets import QMessageBox
+        ans = QMessageBox.question(
+            self, "Update available",
+            f"Dictate {tag} is available (you are on "
+            f"v{_version.__version__}).\n\n"
+            "Open the download page now?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if ans == QMessageBox.Yes:
+            import webbrowser
+            webbrowser.open(url)
 
     def _add_row(self, k: str, v: str):
         r = self.tbl.rowCount()

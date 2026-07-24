@@ -99,3 +99,29 @@ def check_github(repo: str, current_version: str, state_dir: str | None = None,
     except Exception as ex:
         log.debug("update check skipped (%s)", ex)
         return None
+
+
+def check_now(repo: str, current_version: str, timeout: float = 8.0
+              ) -> tuple[str, Update | None]:
+    """Manual, user-initiated check (Settings > About). No throttle.
+
+    Returns (status, update):
+      ("update", Update)  a newer release exists
+      ("latest", None)    running the newest version
+      ("error", None)     network/API problem, could not check
+    """
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/releases/latest",
+            headers={"User-Agent": "Dictate-update-check",
+                     "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+        tag = data.get("tag_name", "")
+        url = data.get("html_url", f"https://github.com/{repo}/releases")
+        if is_newer(tag, current_version):
+            return "update", Update(tag=tag, url=url)
+        return "latest", None
+    except Exception as ex:
+        log.info("manual update check failed: %s", ex)
+        return "error", None
