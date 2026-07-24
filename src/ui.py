@@ -676,11 +676,17 @@ class DictationTrayApp(QObject):
         # Streaming: commit finished chunks while the user is still talking so
         # a long take finalizes near-instantly on release. Gated per-PC.
         self._chunked_take = None
+        self._committed_preview = ""
         if self._streaming_allowed():
             from .streaming import ChunkedTake
+
+            def _on_commit(t):
+                # remember committed text; the preview worker stitches the
+                # live tail onto it so the caption never resets mid-take
+                self._committed_preview = t
+                self.overlay.set_preview(t[-160:])
             self._chunked_take = ChunkedTake(
-                self.engine, self.recorder,
-                on_commit=lambda t: self.overlay.set_preview(t[-120:]))
+                self.engine, self.recorder, on_commit=_on_commit)
             self._chunked_take.start()
         preview_on = (self.live_preview
                       and self.engine.active_device == "cuda")
@@ -697,12 +703,13 @@ class DictationTrayApp(QObject):
         else:
             self.overlay.set_profile_tag("")
         if preview_on:
-            # When streaming commits are active they already feed the preview
-            # pill; running the tail re-transcriber too would just fight the
-            # chunk commits for the engine lock.
-            if self._chunked_take is None:
-                self._preview_stop.clear()
-                threading.Thread(target=self._preview_worker, daemon=True).start()
+            # Run the tail re-transcriber even while streaming commits are
+            # active: try_preview_transcribe is non-blocking (it skips the
+            # pass whenever the engine lock is held by a chunk commit), so
+            # there is no contention — and without it the caption would only
+            # move every ~14s when a chunk lands, which reads as "frozen".
+            self._preview_stop.clear()
+            threading.Thread(target=self._preview_worker, daemon=True).start()
         self._beep(880, 60)  # high beep = recording start
         return True
 
@@ -1086,17 +1093,32 @@ class DictationTrayApp(QObject):
         crashed the CUDA context. The preview is just a 'we can hear you'
         reassurance, so dropping frames is fine."""
         PREVIEW_TAIL_S = 8.0   # only ever re-run the last ~8s for the preview
-        while not self._preview_stop.wait(1.0):
+        while not self._preview_stop.wait(0.4):
             if self.state != RECORDING or self.engine._model is None:
                 continue
             dur = self.recorder.duration
             if dur < 0.8:
                 continue
             try:
-                snapshot = self.recorder.peek_tail(min(dur, PREVIEW_TAIL_S))
+                tail_s = min(dur, PREVIEW_TAIL_S)
+                # With streaming active, never re-preview audio that a chunk
+                # already committed — that would double the words in the
+                # caption. Clamp the tail to the uncommitted region.
+                chunked = self._chunked_take
+                if chunked is not None:
+                    uncommitted_s = dur - chunked._committed / 16000
+                    if uncommitted_s < 0.6:
+                        continue
+                    tail_s = min(tail_s, uncommitted_s)
+                snapshot = self.recorder.peek_tail(tail_s)
                 raw = self.engine.try_preview_transcribe(snapshot)
                 if raw and not self._preview_stop.is_set():
-                    self.overlay.set_preview(raw)
+                    # During a streaming take, prepend the committed text so
+                    # the caption reads continuously instead of resetting at
+                    # every chunk boundary.
+                    committed = getattr(self, "_committed_preview", "")
+                    full = (committed + " " + raw).strip() if committed else raw
+                    self.overlay.set_preview(full[-160:])
             except Exception as ex:
                 log.debug("preview pass failed: %s", ex)
 

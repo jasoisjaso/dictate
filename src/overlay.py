@@ -51,7 +51,7 @@ EQ_PAD_X = 34
 EQ_PAD_Y = 18
 EQ_LEVEL_GAIN = 7.0
 EQ_PREVIEW_W = 680
-EQ_PREVIEW_ROW_H = 24
+EQ_PREVIEW_ROW_H = 34
 EQ_DOT_R = 6
 EQ_DOT_SPACE = 36
 
@@ -62,7 +62,7 @@ EQ_BAR_GLOW = QColor(140, 150, 165, 40)
 BLOB_BASE_R = 70        # base radius in px
 BLOB_POINTS = 128       # polygon vertices for smooth shape
 BLOB_PREVIEW_W = 700
-BLOB_PREVIEW_ROW_H = 24
+BLOB_PREVIEW_ROW_H = 34
 BLOB_PAD_Y = 16
 
 
@@ -98,6 +98,7 @@ class WaveformOverlay(QWidget):
         self._toast_text = ""
         self._toast_until = 0.0
         self._font = QFont("Segoe UI", 10)
+        self._preview_font = QFont("Segoe UI", 13, QFont.DemiBold)
         self._tag_font = QFont("Segoe UI", 7, QFont.Medium)
         self._toast_font = QFont("Segoe UI", 10, QFont.Medium)
 
@@ -510,14 +511,27 @@ class WaveformOverlay(QWidget):
     # ── preview / tag / toast ───────────────────────────────────────────
 
     def _paint_preview(self, p):
-        p.setFont(self._font)
-        fm = QFontMetrics(self._font)
+        """Live-captions row: bright bold text on a dark rounded pill so the
+        words read like subtitles instead of vanishing into the page."""
+        p.setFont(self._preview_font)
+        fm = QFontMetrics(self._preview_font)
         text = self._preview_text or "listening..."
-        elided = fm.elidedText(text, Qt.ElideLeft, self.width() - 40)
-        p.setPen(TEXT_ACTIVE if self._preview_text else TEXT_MUTED)
-        p.drawText(
-            QRectF(20, self._base_h - 2, self.width() - 40, 24),
-            Qt.AlignVCenter | Qt.AlignLeft, elided)
+        max_w = self.width() - 56
+        elided = fm.elidedText(text, Qt.ElideLeft, max_w)
+        tw = fm.horizontalAdvance(elided)
+        row_y = self._base_h - 4
+        row_h = fm.height() + 10
+        # dark pill behind the words, sized to the text
+        pill_w = tw + 28
+        pill_x = (self.width() - pill_w) / 2
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(12, 16, 24, 215))
+        p.drawRoundedRect(QRectF(pill_x, row_y, pill_w, row_h),
+                          row_h / 2, row_h / 2)
+        p.setPen(QColor(255, 255, 255, 245) if self._preview_text
+                 else TEXT_MUTED)
+        p.drawText(QRectF(pill_x + 14, row_y, pill_w - 28, row_h),
+                   Qt.AlignVCenter | Qt.AlignLeft, elided)
 
     def _paint_tag(self, p):
         p.setFont(self._tag_font)
