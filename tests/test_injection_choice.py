@@ -22,3 +22,20 @@ def test_multiline_always_pastes_in_auto():
     # newline keystrokes can trigger "send" in chat apps — paste is safer
     assert choose_injection("line one\nline two", mode="auto",
                             paste_threshold=300) == "paste"
+
+
+def test_terminal_prefers_type_even_for_long_text():
+    # terminals drop synthesized Ctrl+V too often; type long single-line text
+    assert choose_injection("x" * 999, mode="auto", paste_threshold=300,
+                            prefer_type=True) == "type"
+
+
+def test_terminal_multiline_still_pastes():
+    # a typed Enter would execute the half-finished line in a shell
+    assert choose_injection("line one\nline two", mode="auto",
+                            paste_threshold=300, prefer_type=True) == "paste"
+
+
+def test_prefer_type_does_not_override_forced_paste():
+    assert choose_injection("hi", mode="paste", paste_threshold=300,
+                            prefer_type=True) == "paste"

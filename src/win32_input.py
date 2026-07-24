@@ -77,18 +77,28 @@ def injection_suspect(sent: int, expected: int) -> bool:
 
 
 def choose_injection(text: str, mode: str = "auto",
-                     paste_threshold: int = 300) -> str:
+                     paste_threshold: int = 300,
+                     prefer_type: bool = False) -> str:
     """'type' (SendInput per char) or 'paste' (clipboard + Ctrl+V).
 
     Typing is invisible to the clipboard and feels native for short bursts.
     Pasting is instant for long text and — crucially — the only safe option
     for multi-line output in auto mode, because a typed Enter can fire
     "send" in chat apps before the message is complete.
+
+    prefer_type: terminals (Windows Terminal, conhost, PuTTY...) reliably
+    accept typed Unicode input but are flaky about a synthesized Ctrl+V
+    (some builds ignore injected keys without scan codes, some bind the
+    shortcut differently, some treat ^V as a literal control char). For a
+    terminal-profile window, single-line text of any length is typed;
+    only multi-line text still pastes.
     """
     if mode in ("type", "paste"):
         return mode
     if "\n" in text:
         return "paste"
+    if prefer_type:
+        return "type"
     return "paste" if len(text) > paste_threshold else "type"
 
 
@@ -213,6 +223,10 @@ if IS_WINDOWS:
     kernel32.GlobalFree.restype = wintypes.HGLOBAL
     kernel32.GlobalSize.argtypes = [wintypes.HGLOBAL]
     kernel32.GlobalSize.restype = ctypes.c_size_t
+    user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
+    user32.MapVirtualKeyW.restype = wintypes.UINT
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    user32.GetAsyncKeyState.restype = ctypes.c_short
 
     def _open_clipboard(retries: int = 6, delay: float = 0.015) -> bool:
         """OpenClipboard with a short retry — another process (clipboard
@@ -274,8 +288,36 @@ if IS_WINDOWS:
     def _vk_event(vk, flags=0):
         inp = INPUT()
         inp.type = INPUT_KEYBOARD
-        inp.ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=flags, time=0, dwExtraInfo=None)
+        # Real keyboards always deliver a scan code; several apps (Windows
+        # Terminal among them, see microsoft/terminal#7900) special-case or
+        # drop synthesized keys whose wScan is 0. MapVirtualKeyW(vk, 0)
+        # supplies the hardware scan code so the injected Ctrl+V looks like
+        # a physical keypress everywhere.
+        scan = user32.MapVirtualKeyW(vk, 0)  # MAPVK_VK_TO_VSC
+        inp.ki = KEYBDINPUT(wVk=vk, wScan=scan, dwFlags=flags,
+                            time=0, dwExtraInfo=None)
         return inp
+
+    VK_RCONTROL = 0xA3
+    VK_LCONTROL = 0xA2
+
+    def _wait_modifiers_released(timeout_s: float = 1.0):
+        """Wait for physical Ctrl keys to come up before injecting Ctrl+V.
+
+        Push-to-talk is Right Ctrl: on a fast transcription the user's
+        finger can still be on the key when the paste fires, and the
+        target app then sees Ctrl held + V + Ctrl-up sequences interleaved
+        with the real key, which some apps resolve as nothing at all.
+        """
+        import time as _time
+        deadline = _time.time() + timeout_s
+        while _time.time() < deadline:
+            if not (user32.GetAsyncKeyState(VK_CONTROL) & 0x8000
+                    or user32.GetAsyncKeyState(VK_RCONTROL) & 0x8000
+                    or user32.GetAsyncKeyState(VK_LCONTROL) & 0x8000):
+                return True
+            _time.sleep(0.01)
+        return False
 
     def inject_text_via_paste(text_string: str, restore_delay: float = 1.2):
         """Put text on the clipboard, press Ctrl+V, then restore what was there.
@@ -319,6 +361,14 @@ if IS_WINDOWS:
             log.error("could not write clipboard; falling back to typed injection")
             inject_text_native_unicode(text_string)
             return False
+        # If the user's finger is still on Ctrl (push-to-talk is Right Ctrl
+        # and fast takes transcribe in well under a second), the injected
+        # Ctrl+V collides with the physically held key and many apps see
+        # nothing. Wait for the real key to come up first.
+        if not _wait_modifiers_released():
+            log.warning("Ctrl still held after 1s — typing instead of pasting")
+            inject_text_native_unicode(text_string)
+            return True
         _send_inputs([
             _vk_event(VK_CONTROL),
             _vk_event(VK_V),

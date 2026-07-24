@@ -59,3 +59,23 @@ def test_paste_never_raises_off_windows():
     """inject_text_via_paste must be a safe no-op on non-Windows."""
     if not IS_WIN:
         assert win32_input.inject_text_via_paste("hello " * 100) is False
+
+
+@pytest.mark.skipif(not IS_WIN, reason="Windows-only input plumbing")
+def test_vk_events_carry_real_scan_codes():
+    """Synthesized Ctrl+V must include hardware scan codes: Windows
+    Terminal (microsoft/terminal#7900) and others drop injected keys
+    whose wScan is 0, which silently ate long pasted dictations."""
+    for vk in (win32_input.VK_CONTROL, win32_input.VK_V):
+        evt = win32_input._vk_event(vk)
+        assert evt.ki.wVk == vk
+        assert evt.ki.wScan != 0, f"vk 0x{vk:02X} produced no scan code"
+
+
+@pytest.mark.skipif(not IS_WIN, reason="Windows-only input plumbing")
+def test_modifier_wait_returns_quickly_when_keys_up():
+    """With no Ctrl key physically held this must return True fast."""
+    import time
+    t0 = time.time()
+    assert win32_input._wait_modifiers_released(timeout_s=1.0) is True
+    assert time.time() - t0 < 0.5

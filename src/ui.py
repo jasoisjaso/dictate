@@ -838,8 +838,12 @@ class DictationTrayApp(QObject):
         # --- normal dictation ---------------------------------------------
         self.history.add(text, app=self._rec_app)
         payload = text if text.endswith("\n") else text + " "
+        # Terminals accept typed Unicode fine but eat synthesized Ctrl+V
+        # more often than any other app class — type there, even long text.
+        in_terminal = bool(self._rec_profile and self._rec_profile.get("verbatim"))
         how = win32_input.choose_injection(payload, mode=self.inject_mode,
-                                           paste_threshold=self.paste_threshold)
+                                           paste_threshold=self.paste_threshold,
+                                           prefer_type=in_terminal)
         delivered = True
         try:
             if how == "paste":
