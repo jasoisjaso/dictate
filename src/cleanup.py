@@ -135,15 +135,33 @@ def clean(text: str, *, remove_fillers: bool,
 
 # ---- optional local-LLM polish (never blocks dictation) -----------------
 
+def _think_for_model(model: str) -> "str | bool | None":
+    """Reasoning models burn most of the time budget on hidden
+    chain-of-thought (measured: gpt-oss:20b spent 3k chars / ~40s
+    thinking about a one-line translation). Suppress it where the model
+    supports the knob; None means don't send the field at all, because
+    Ollama rejects it for models without thinking support."""
+    base = model.split(":")[0]
+    if base in ("gpt-oss",):
+        return "low"       # gpt-oss only accepts low/medium/high
+    if base in ("qwen3", "deepseek-r1", "cogito"):
+        return False
+    return None
+
+
 def _ollama_generate(prompt: str, model: str, endpoint: str,
-                     timeout: float, keep_alive: str = "10m") -> str:
+                     timeout: float, keep_alive: str = "10m",
+                     think: "str | bool | None" = None) -> str:
+    payload = {"model": model, "prompt": prompt,
+               "stream": False,
+               # keep the model resident between takes so only the
+               # FIRST translation pays the load cost, not every one
+               "keep_alive": keep_alive}
+    if think is not None:
+        payload["think"] = think
     req = urllib.request.Request(
         endpoint.rstrip("/") + "/api/generate",
-        data=json.dumps({"model": model, "prompt": prompt,
-                         "stream": False,
-                         # keep the model resident between takes so only the
-                         # FIRST translation pays the load cost, not every one
-                         "keep_alive": keep_alive}).encode(),
+        data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read()).get("response", "").strip()
@@ -185,8 +203,11 @@ def ollama_translate_to_english(text: str, model: str, endpoint: str,
     if not text.strip():
         return text
     try:
+        # 60m keep_alive: a 10m idle gap between takes was enough to
+        # evict the model and put the next take back on the cold path
         out = _ollama_generate(_TRANSLATE_PROMPT + text, model, endpoint,
-                               timeout)
+                               timeout, keep_alive="60m",
+                               think=_think_for_model(model))
         return out if out else None
     except Exception as ex:
         log.debug("ollama translate unavailable (%s)", ex)
@@ -210,7 +231,8 @@ def ollama_translate_to_bosnian(text: str, model: str, endpoint: str,
         return text
     try:
         out = _ollama_generate(_TRANSLATE_BS_PROMPT + text, model, endpoint,
-                               timeout)
+                               timeout, keep_alive="60m",
+                               think=_think_for_model(model))
         return out if out else None
     except Exception as ex:
         log.debug("ollama translate unavailable (%s)", ex)

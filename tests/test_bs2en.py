@@ -115,6 +115,30 @@ def test_translate_model_priority_prefers_small():
         assert device.ollama_pick_translate_model() == "qwen2.5:3b"
 
 
+def test_translate_model_prefers_dolphin_over_tiny():
+    """dolphin3:8b beats qwen2.5:3b for bs->en: the 3B mistranslates
+    content words (skladiste -> archive) while dolphin gets them right
+    and still evals in 1-3s warm."""
+    import json
+    from unittest import mock
+
+    names = ["qwen2.5:3b", "dolphin3:8b", "hermes4:14b"]
+    payload = json.dumps({"models": [{"name": n} for n in names]}).encode()
+
+    class FakeResp:
+        def read(self):
+            return payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+        assert device.ollama_pick_translate_model() == "dolphin3:8b"
+
+
 def test_translate_returns_none_on_error():
     # unreachable endpoint -> None, caller falls back
     out = cleanup.ollama_translate_to_english(
@@ -193,6 +217,31 @@ def test_bs_translate_model_prefers_quality():
     with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
         # gpt-oss:20b is the quality pick, NOT qwen2.5:3b (the speed pick)
         assert device.ollama_pick_bs_translate_model() == "gpt-oss:20b"
+
+
+def test_bs_translate_model_prefers_resident_hermes4():
+    """hermes4:14b outranks gpt-oss:20b for en->bs: gpt-oss writes the
+    best Bosnian but its 13GB cold load (224-400s measured) times out
+    every first take on 16GB cards, while hermes4 is also the default
+    polish model and is usually already resident."""
+    import json
+    from unittest import mock
+
+    names = ["qwen2.5:3b", "gpt-oss:20b", "hermes4:14b", "dolphin3:8b"]
+    payload = json.dumps({"models": [{"name": n} for n in names]}).encode()
+
+    class FakeResp:
+        def read(self):
+            return payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+        assert device.ollama_pick_bs_translate_model() == "hermes4:14b"
 
 
 def test_bs_translate_returns_none_on_error():

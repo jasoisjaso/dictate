@@ -237,8 +237,9 @@ class WhisperTranscriber:
             # forced on: trust the config, mark available for level=high
             self.ollama_available = True
         # Translate modes: pre-warm the translation model in the background so
-        # the FIRST dictation isn't the slow cold-load one. Especially matters
-        # for en->bs, whose quality model is heavy (~20s cold, ~5s warm).
+        # the FIRST dictation isn't the slow cold-load one. Measured cold
+        # loads run 1-4+ MINUTES on slow disks / VRAM-pressured 16GB cards
+        # (2026-07-28), so the real calls below could never survive one.
         if getattr(self, "translate_to_en", False) or \
                 getattr(self, "translate_to_bs", False):
             import threading as _th
@@ -311,8 +312,12 @@ class WhisperTranscriber:
                          or self.ollama_model)
                 self._translate_model_en = model
             if model:
+                # 600s: cold loads measured up to 400s+; a shorter timeout
+                # here silently leaves the model cold and the first real
+                # take then eats the whole load inside its delivery window
                 _cl._ollama_generate("hi", model, self.ollama_endpoint,
-                                     timeout=120.0)
+                                     timeout=600.0, keep_alive="60m",
+                                     think=_cl._think_for_model(model))
                 log.info("pre-warmed translate model %s", model)
         except Exception as ex:
             log.debug("translate model pre-warm skipped (%s)", ex)
@@ -507,7 +512,7 @@ class WhisperTranscriber:
                              self._translate_model_en)
                 translated = _cleanup_tr.ollama_translate_to_english(
                     text, self._translate_model_en, self.ollama_endpoint,
-                    timeout=30.0)
+                    timeout=60.0)
             else:
                 # en->bs: quality-first model, small ones butcher Bosnian
                 if not getattr(self, "_translate_model_bs", None):
@@ -516,9 +521,11 @@ class WhisperTranscriber:
                             self.ollama_endpoint) or self.ollama_model)
                     log.info("en->bs translate model: %s",
                              self._translate_model_bs)
+                # 120s: covers a take that lands while the pre-warm is still
+                # mid-load; warm evals are a few seconds
                 translated = _cleanup_tr.ollama_translate_to_bosnian(
                     text, self._translate_model_bs, self.ollama_endpoint,
-                    timeout=60.0)
+                    timeout=120.0)
             if translated:
                 log.info("translated take to %s (%d -> %d chars)",
                          "English" if want_en else "Bosnian",

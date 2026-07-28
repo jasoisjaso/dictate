@@ -177,9 +177,11 @@ def ollama_pick_translate_model(endpoint: str = "http://127.0.0.1:11434",
 
     Unlike polish (where the user's preferred big model is fine because it
     rarely fires), translation sits directly in the time-to-text path of
-    every Bosnian take, so small and fast wins: a 3B model translates
-    bs->en in about half a second warm, a 14B takes 20+ seconds. Smallest
-    capable instruct models first.
+    every Bosnian take, so fast-when-warm wins. Measured 2026-07-28
+    (4060 Ti 16GB): qwen2.5:3b mistranslates content words (skladiste ->
+    "archive", radio -> "went"); dolphin3:8b got the same sentence right
+    and evals in 1-3s warm (~50s cold load, prewarmed at startup), so it
+    leads. The tiny models stay as fallbacks for low-VRAM machines.
     """
     import json
     import urllib.request
@@ -192,9 +194,9 @@ def ollama_pick_translate_model(endpoint: str = "http://127.0.0.1:11434",
         return None
     if not names:
         return None
-    for cand in ("qwen2.5:3b", "llama3.2:3b", "llama3.2:1b", "gemma2:2b",
-                 "phi3.5:3.8b", "phi3.5", "llama3.2", "qwen2.5:7b",
-                 "dolphin3:8b", "qwen2.5", "hermes4"):
+    for cand in ("dolphin3:8b", "qwen2.5:3b", "llama3.2:3b", "llama3.2:1b",
+                 "gemma2:2b", "phi3.5:3.8b", "phi3.5", "llama3.2",
+                 "qwen2.5:7b", "qwen2.5", "hermes4"):
         if cand in names:
             return cand
         base_match = [n for n in names if n.split(":")[0] == cand]
@@ -208,11 +210,16 @@ def ollama_pick_bs_translate_model(endpoint: str = "http://127.0.0.1:11434",
     """Best installed Ollama model for translating INTO Bosnian.
 
     The small models that are perfect for bs->en butcher Bosnian output
-    (broken words, ekavian drift). Measured on this hardware: qwen2.5:3b
-    and dolphin3:8b produce wrong words, hermes4:14b is excellent but
-    ~56s, gpt-oss:20b (MoE, few active params) is correct ijekavian at
-    ~7s warm. Quality-first order, since a Bosnian speaker instantly
-    spots bad Bosnian.
+    (broken words, ekavian drift). Measured 2026-07-28 (4060 Ti 16GB,
+    slow disk): gpt-oss:20b writes the best Bosnian but its 13GB cold
+    load took 224-400s and evicts whisper from VRAM on 16GB cards --
+    every first take times out, the feature looks dead. hermes4:14b
+    writes correct ijekavian ("Bit cu kod kuce...") and doubles as the
+    default polish model, so in a normal session it is ALREADY resident
+    in Ollama: near-zero marginal cost. qwen3:14b and dolphin3:8b both
+    butcher Bosnian (enclitic-first word order, Cyrillic bleed). A
+    Bosnian speaker instantly spots bad Bosnian, so quality-capable +
+    actually-loadable order.
     """
     import json
     import urllib.request
@@ -225,8 +232,8 @@ def ollama_pick_bs_translate_model(endpoint: str = "http://127.0.0.1:11434",
         return None
     if not names:
         return None
-    for cand in ("gpt-oss:20b", "gpt-oss", "qwen3:14b", "hermes4:14b",
-                 "hermes4", "cogito:14b", "qwen2.5:7b", "dolphin3:8b"):
+    for cand in ("hermes4:14b", "hermes4", "cogito:14b", "gpt-oss:20b",
+                 "gpt-oss", "qwen3:14b", "qwen2.5:7b", "dolphin3:8b"):
         if cand in names:
             return cand
         base_match = [n for n in names if n.split(":")[0] == cand]
