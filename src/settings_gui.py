@@ -26,6 +26,8 @@ MODEL_CHOICES = [
 LANG_CHOICES = [
     ("en", "English"), ("auto", "Auto-detect (any language)"),
     ("multi", "Mixed: English + Bosnian (detects per take)"),
+    ("bs2en", "Translate: speak Bosnian, write English"),
+    ("en2bs", "Translate: speak English, write Bosnian"),
     ("bs", "Bosnian"), ("hr", "Croatian"), ("sr", "Serbian"),
     ("de", "German"), ("es", "Spanish"), ("fr", "French"),
     ("it", "Italian"), ("pt", "Portuguese"), ("nl", "Dutch"),
