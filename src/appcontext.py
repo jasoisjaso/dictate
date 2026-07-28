@@ -85,4 +85,13 @@ DEFAULT_PROFILES = {
         "match": ["OUTLOOK.EXE", "olk.exe", "Thunderbird.exe"],
         "tone": "professional",
     },
+    # Modern Windows 11 Notepad (Store app) has a slow input pipeline that
+    # silently drops fast synthesized keystrokes — the classic "only the
+    # first word types, rest is blank" symptom. Force clipboard-paste there
+    # (instant + atomic) so nothing is lost. Notepad ONLY; every other app
+    # types normally.
+    "notepad": {
+        "match": ["Notepad.exe", "notepad.exe"],
+        "force_paste": True,
+    },
 }

@@ -670,6 +670,15 @@ class DictationTrayApp(QObject):
         else:  # prose
             self._rec_app = appcontext.foreground_exe()
             self._rec_profile = {"_profile": "prose"}
+        # force_paste is a delivery quirk of the target app (e.g. modern
+        # Notepad dropping typed keys), independent of the formatting mode.
+        # Carry it over even when a manual F7 mode overrode the profile, so
+        # it always applies whenever the focused app needs it.
+        if self._dict_mode != "auto" and self._rec_app:
+            _app_prof = appcontext.resolve_profile(self._rec_app,
+                                                   self.app_profiles)
+            if _app_prof.get("force_paste"):
+                self._rec_profile["force_paste"] = True
         if self._rec_profile:
             log.info("app context: %s -> profile %s (mode=%s)",
                      self._rec_app, self._rec_profile.get("_profile"),
@@ -859,9 +868,15 @@ class DictationTrayApp(QObject):
         # Terminals accept typed Unicode fine but eat synthesized Ctrl+V
         # more often than any other app class — type there, even long text.
         in_terminal = bool(self._rec_profile and self._rec_profile.get("verbatim"))
-        how = win32_input.choose_injection(payload, mode=self.inject_mode,
-                                           paste_threshold=self.paste_threshold,
-                                           prefer_type=in_terminal)
+        # Some apps (modern Windows 11 Notepad) drop fast typed keystrokes;
+        # their profile sets force_paste so we deliver via clipboard instead.
+        force_paste = bool(self._rec_profile and self._rec_profile.get("force_paste"))
+        if force_paste:
+            how = "paste"
+        else:
+            how = win32_input.choose_injection(payload, mode=self.inject_mode,
+                                               paste_threshold=self.paste_threshold,
+                                               prefer_type=in_terminal)
         delivered = True
         try:
             if how == "paste":
