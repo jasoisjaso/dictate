@@ -222,6 +222,15 @@ class ParakeetTranscriber(TextPipeline):
         log.debug("raw transcript: %r", text)
         return text
 
+    # Pacing overrides (TextPipeline defaults are Whisper-on-GPU numbers).
+    # Greedy transducer decode measured ~20x realtime at 4 threads on the
+    # field PC, so: caption passes every 0.25s over a 6s tail (~0.3s each),
+    # and 6s streaming chunks so committed text lands 2-3x sooner and the
+    # caption tail covers virtually all uncommitted audio.
+    preview_interval_s = 0.25
+    preview_tail_s = 6.0
+    min_chunk_s = 6.0
+
     # Preview cost containment: only re-decode the newest tail. 15 s at
     # ~19x realtime is under a second per pass — fine for a ~1 Hz caption.
     _PREVIEW_WINDOW = 16000 * 15

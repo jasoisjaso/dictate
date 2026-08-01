@@ -280,15 +280,18 @@ class SessionMixin:
         real transcription — that contention stalls the final result and has
         crashed the CUDA context. The preview is just a 'we can hear you'
         reassurance, so dropping frames is fine."""
-        PREVIEW_TAIL_S = 8.0   # only ever re-run the last ~8s for the preview
-        while not self._preview_stop.wait(0.4):
+        # Pacing is engine-owned (decode speed decides what's affordable):
+        # Whisper-on-GPU 0.4s/8s, Parakeet 0.25s/6s.
+        interval = getattr(self.engine, "preview_interval_s", 0.4)
+        tail_cap = getattr(self.engine, "preview_tail_s", 8.0)
+        while not self._preview_stop.wait(interval):
             if self.state != RECORDING or self.engine._model is None:
                 continue
             dur = self.recorder.duration
             if dur < 0.8:
                 continue
             try:
-                tail_s = min(dur, PREVIEW_TAIL_S)
+                tail_s = min(dur, tail_cap)
                 # With streaming active, never re-preview audio that a chunk
                 # already committed — that would double the words in the
                 # caption. Clamp the tail to the uncommitted region.

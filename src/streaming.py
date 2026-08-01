@@ -94,7 +94,11 @@ class ChunkedTake:
     # ---- worker ----------------------------------------------------------
 
     def _run(self):
-        min_chunk = int(MIN_CHUNK_S * self.sr)
+        # Chunk size is engine-owned: Whisper keeps the 14s default, Parakeet
+        # commits every ~6s (decode is cheap, and shorter chunks keep the
+        # live caption's committed text close behind the spoken words).
+        min_chunk = int(getattr(self.engine, "min_chunk_s", MIN_CHUNK_S)
+                        * self.sr)
         while not self._stop.wait(1.0):
             try:
                 buf = self.recorder.snapshot()

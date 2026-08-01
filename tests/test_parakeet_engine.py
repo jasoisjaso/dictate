@@ -193,6 +193,17 @@ def test_preview_ok_contract(monkeypatch):
     assert engine_mod.create_engine(cfg).preview_ok is False
 
 
+def test_pacing_is_engine_owned():
+    # session.py/streaming.py read these off the engine; Whisper keeps the
+    # historical GPU tuning, Parakeet runs snappier everywhere
+    pk = ParakeetTranscriber(_cfg())
+    assert (pk.preview_interval_s, pk.preview_tail_s, pk.min_chunk_s) \
+        == (0.25, 6.0, 6.0)
+    assert (engine_mod.TextPipeline.preview_interval_s,
+            engine_mod.TextPipeline.preview_tail_s,
+            engine_mod.TextPipeline.min_chunk_s) == (0.4, 8.0, 14.0)
+
+
 def test_preview_decodes_when_loaded(stub_sherpa, model_dir):
     t = ParakeetTranscriber(_cfg(model_dir=model_dir))
     t.load()

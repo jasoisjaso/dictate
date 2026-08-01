@@ -74,6 +74,14 @@ class TextPipeline:
     self.language is resolved (lexicon and filler list depend on it).
     """
 
+    # Live-caption + streaming pacing, owned by the engine because the right
+    # numbers depend on decode speed. These defaults are the Whisper-on-GPU
+    # tuning session.py/streaming.py always used; Parakeet overrides them
+    # (cheap greedy CPU decode = shorter chunks, snappier caption).
+    preview_interval_s = 0.4   # sleep between caption passes
+    preview_tail_s = 8.0       # how much recent audio a caption pass re-decodes
+    min_chunk_s = 14.0         # uncommitted audio needed before a chunk commit
+
     def _init_text_pipeline(self, cfg: dict, lang: str, *,
                             auto_punct_when_auto: bool):
         self.lexicon = _build_lexicon(self.language)
