@@ -49,6 +49,21 @@ MODEL_DIR_NAME = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
 MODEL_LABEL = "parakeet-tdt-0.6b-v3"   # model_size string shown in the tray
 
 
+# Peak-normalise before decode. Whisper's frontend shrugs off quiet input;
+# the int8 FastConformer transducer audibly doesn't (field report 2026-08-01:
+# owner had to lean into the mic). Bring quiet takes up to a healthy peak,
+# cap the gain so a silent room isn't amplified into noise soup.
+_PEAK_TARGET = 0.9
+_GAIN_CAP = 30.0
+
+
+def _normalize(audio_data: np.ndarray) -> np.ndarray:
+    peak = float(np.max(np.abs(audio_data))) if audio_data.size else 0.0
+    if peak < 1e-4 or peak >= _PEAK_TARGET:
+        return audio_data
+    return audio_data * min(_PEAK_TARGET / peak, _GAIN_CAP)
+
+
 def sherpa_available() -> bool:
     """True if the sherpa-onnx wheel imports on this machine. Checked by
     create_engine() BEFORE constructing the transcriber, so a missing wheel
@@ -180,10 +195,13 @@ class ParakeetTranscriber(TextPipeline):
     def _decode(self, audio_data: np.ndarray) -> str:
         """One offline decode. Caller must NOT hold the lock."""
         with self._lock:
-            s = self._model.create_stream()
-            s.accept_waveform(16000, audio_data)
-            self._model.decode_stream(s)
-            return (s.result.text or "").strip()
+            return self._decode_locked(audio_data)
+
+    def _decode_locked(self, audio_data: np.ndarray) -> str:
+        s = self._model.create_stream()
+        s.accept_waveform(16000, _normalize(audio_data))
+        self._model.decode_stream(s)
+        return (s.result.text or "").strip()
 
     # ---- transcription -----------------------------------------------
 
@@ -204,8 +222,29 @@ class ParakeetTranscriber(TextPipeline):
         log.debug("raw transcript: %r", text)
         return text
 
+    # Preview cost containment: only re-decode the newest tail. 15 s at
+    # ~19x realtime is under a second per pass — fine for a ~1 Hz caption.
+    _PREVIEW_WINDOW = 16000 * 15
+
+    @property
+    def preview_ok(self) -> bool:
+        """Live caption is affordable on CPU here: greedy transducer decode
+        runs ~19x realtime and the non-blocking lock keeps it out of the
+        way of chunk commits and the final pass."""
+        return True
+
     def try_preview_transcribe(self, audio_data: np.ndarray) -> str | None:
-        """Live preview stays Whisper-GPU-only in v1 (design §3.4). Cheap
-        for Parakeet in theory — that's the Phase 3 experiment, not a launch
-        feature. Returning None keeps the preview worker a no-op."""
-        return None
+        """Live caption pass. Same contract as Whisper's: return None
+        instantly when the lock is busy (a chunk commit or the final pass
+        is running) — the preview must never queue behind real work."""
+        if audio_data.size < 1600 or self._model is None:
+            return None
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            return self._decode_locked(audio_data[-self._PREVIEW_WINDOW:])
+        except Exception as ex:
+            log.debug("preview transcribe failed: %s", ex)
+            return None
+        finally:
+            self._lock.release()

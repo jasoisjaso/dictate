@@ -183,9 +183,54 @@ def test_transcribe_tiny_buffer_short_circuits(stub_sherpa, model_dir):
     assert t.transcribe_audio_buffer(np.zeros(100, dtype=np.float32)) == ""
 
 
-def test_preview_is_noop():
-    t = ParakeetTranscriber(_cfg())
-    assert t.try_preview_transcribe(np.zeros(32000, dtype=np.float32)) is None
+def test_preview_ok_contract(monkeypatch):
+    # engine-owned gate: Parakeet affordable even on CPU, Whisper CUDA-only
+    assert ParakeetTranscriber(_cfg()).preview_ok is True
+    monkeypatch.setattr(device, "detect", lambda: CPU)
+    cfg = {"whisper": {"model_size": "small", "device": "cpu",
+                       "compute_type": "int8", "language": "en"},
+           "engine": {"engine": "whisper"}}
+    assert engine_mod.create_engine(cfg).preview_ok is False
+
+
+def test_preview_decodes_when_loaded(stub_sherpa, model_dir):
+    t = ParakeetTranscriber(_cfg(model_dir=model_dir))
+    t.load()
+    out = t.try_preview_transcribe(np.zeros(32000, dtype=np.float32))
+    assert out == "hello world"
+
+
+def test_preview_none_before_load_and_when_busy(stub_sherpa, model_dir):
+    t = ParakeetTranscriber(_cfg(model_dir=model_dir))
+    audio = np.zeros(32000, dtype=np.float32)
+    assert t.try_preview_transcribe(audio) is None  # not loaded yet
+    t.load()
+    with t._lock:  # a chunk commit / final pass is holding the engine
+        assert t.try_preview_transcribe(audio) is None
+
+
+# ---- quiet-mic normalisation -------------------------------------------------
+
+def test_normalize_boosts_quiet_audio():
+    quiet = np.full(1600, 0.05, dtype=np.float32)
+    out = engine_parakeet._normalize(quiet)
+    assert np.isclose(np.max(np.abs(out)), 0.9, atol=0.01)
+
+
+def test_normalize_leaves_healthy_audio_alone():
+    loud = np.full(1600, 0.95, dtype=np.float32)
+    assert engine_parakeet._normalize(loud) is loud
+
+
+def test_normalize_never_amplifies_dead_silence():
+    silence = np.full(1600, 1e-5, dtype=np.float32)
+    assert engine_parakeet._normalize(silence) is silence
+
+
+def test_normalize_gain_is_capped():
+    faint = np.full(1600, 2e-4, dtype=np.float32)
+    out = engine_parakeet._normalize(faint)
+    assert np.max(np.abs(out)) <= 2e-4 * engine_parakeet._GAIN_CAP + 1e-9
 
 
 def test_load_raises_cleanly_when_model_missing(stub_sherpa, tmp_path):

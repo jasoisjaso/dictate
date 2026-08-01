@@ -659,6 +659,14 @@ class WhisperTranscriber(TextPipeline):
         log.debug("raw transcript: %r", text)
         return text
 
+    @property
+    def preview_ok(self) -> bool:
+        """Live caption is only affordable on CUDA for Whisper: a CPU
+        preview pass would fight the final transcription for cores and
+        make the take slower. Each engine owns this call — Parakeet says
+        True even on CPU (greedy transducer decode is ~19x realtime)."""
+        return self.active_device == "cuda"
+
     def try_preview_transcribe(self, audio_data: np.ndarray) -> str | None:
         """Best-effort transcription for the live preview pill.
 

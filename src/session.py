@@ -119,8 +119,10 @@ class SessionMixin:
             self._chunked_take = ChunkedTake(
                 self.engine, self.recorder, on_commit=_on_commit)
             self._chunked_take.start()
+        # Each engine decides whether a live caption is affordable on this
+        # hardware (Whisper: CUDA only; Parakeet: yes even on CPU).
         preview_on = (self.live_preview
-                      and self.engine.active_device == "cuda")
+                      and getattr(self.engine, "preview_ok", False))
         self.overlay.show_recording(preview=preview_on)
         # show which mode/profile is active so the context awareness is visible
         if self._rec_profile:
