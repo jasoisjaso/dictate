@@ -526,11 +526,25 @@ class SettingsDialog(QDialog):
     def _sync_engine_ui(self):
         """Engine combo drives the Model row + the honesty labels.
         PARAKEET_LANGS comes from the engine module, so the warning can
-        never drift from what device.choose_engine() actually does."""
+        never drift from what device.choose_engine() actually does.
+
+        Import failures here must NOT kill the Settings dialog. The known
+        way it happens: the tray app keeps running while the repo files
+        change underneath it (dev workflow), so the cached old engine.py
+        can't satisfy engine_parakeet's imports until a restart. Degrade to
+        no-warning-row instead of a flash-and-gone dialog."""
+        PARAKEET_LANGS = None
         try:
-            from .engine_parakeet import PARAKEET_LANGS
-        except ImportError:
-            from engine_parakeet import PARAKEET_LANGS
+            try:
+                from .engine_parakeet import PARAKEET_LANGS
+            except ImportError:
+                from engine_parakeet import PARAKEET_LANGS
+        except Exception:
+            import logging
+            logging.getLogger("dictate.settings").warning(
+                "engine_parakeet unavailable (stale process after code "
+                "update? restart Dictate) — engine hints degraded",
+                exc_info=True)
         eng = self.cb_engine.currentData()
         lang = self.cb_lang.currentData()
         if eng == "parakeet":
@@ -564,7 +578,8 @@ class SettingsDialog(QDialog):
                 pass
         self.lbl_engine_hint.setText(hint)
         warn = ""
-        if eng == "parakeet" and lang not in PARAKEET_LANGS:
+        if (eng == "parakeet" and PARAKEET_LANGS is not None
+                and lang not in PARAKEET_LANGS):
             warn = (f"Parakeet can't transcribe "
                     f"\u201c{self.cb_lang.currentText()}\u201d. "
                     "Dictate will use Whisper for this language.")
