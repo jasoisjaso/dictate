@@ -12,17 +12,33 @@ log = logging.getLogger("dictate.model_lifecycle")
 
 
 def preload(engine, emit_dl_start, emit_dl_progress, emit_dl_done,
-            emit_ready, emit_error):
+            emit_ready, emit_error) -> bool:
     """Download the engine's model if not cached, then load it.
-    Runs on a worker thread."""
+    Runs on a worker thread. Returns True on success.
+
+    Parakeet failures return False WITHOUT emitting the error balloon:
+    the app falls back to Whisper for the session (ui._preload_model) and
+    tells the user with a calm info note instead — the optional engine must
+    never look like the app is broken."""
+    is_parakeet = getattr(engine, "engine_name", "whisper") == "parakeet"
     try:
         try:
             from . import first_run, paths
         except ImportError:
             import first_run
             import paths
-        if not first_run.model_is_cached(engine.model_size,
-                                         paths.models_dir()):
+        if is_parakeet:
+            if not first_run.parakeet_is_cached(
+                    paths.models_dir(),
+                    getattr(engine, "model_dir_override", "")):
+                emit_dl_start(engine.model_size)
+                try:
+                    first_run.download_parakeet_with_progress(
+                        paths.models_dir(), emit_dl_progress)
+                finally:
+                    emit_dl_done()
+        elif not first_run.model_is_cached(engine.model_size,
+                                           paths.models_dir()):
             emit_dl_start(engine.model_size)
             try:
                 first_run.download_with_progress(
@@ -32,9 +48,12 @@ def preload(engine, emit_dl_start, emit_dl_progress, emit_dl_done,
                 emit_dl_done()
         engine.load()
         emit_ready(engine.active_device or "?")
+        return True
     except Exception as ex:
         log.exception("model preload failed")
-        emit_error(f"Model failed to load: {ex}")
+        if not is_parakeet:
+            emit_error(f"Model failed to load: {ex}")
+        return False
 
 
 def update_check(emit_update_available):

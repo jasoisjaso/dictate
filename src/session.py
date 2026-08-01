@@ -157,7 +157,8 @@ class SessionMixin:
             tier = _device.Tier(device=self.engine.active_device or "cpu",
                                 compute_type=self.engine.compute_type,
                                 model_size=self.engine.model_size)
-            allowed = _device.streaming_ok(tier)
+            allowed = _device.streaming_ok(
+                tier, getattr(self.engine, "engine_name", "whisper"))
         except Exception:
             allowed = False
         if self.streaming_mode == "on":

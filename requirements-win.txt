@@ -5,6 +5,9 @@
 #    with current cu12 wheels (cudnn 9.24 proven on this machine already).
 #  - pynput 1.7.6 predates Win11 fixes; 1.8+ needed.
 faster-whisper==1.2.1
+# Parakeet TDT v3 second engine (docs/parakeet-engine.md). onnxruntime only,
+# no NeMo. The app fail-opens to Whisper if this wheel is missing/broken.
+sherpa-onnx>=1.12
 nvidia-cublas-cu12
 nvidia-cudnn-cu12
 sounddevice>=0.5.1

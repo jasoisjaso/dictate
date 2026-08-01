@@ -23,6 +23,21 @@ MODEL_CHOICES = [
     ("large-v3", "Large v3 — maximum accuracy, slow (~3 GB)"),
 ]
 
+ENGINE_CHOICES = [
+    ("auto", "Auto — best engine per language (recommended)"),
+    ("whisper", "Whisper — all languages, custom dictionary"),
+    ("parakeet", "Parakeet — fastest on CPU, 25 European languages"),
+]
+
+# Single v1 Parakeet entry: users see the download cost without a second
+# decision to make (docs/parakeet-engine.md §4.1)
+PARAKEET_MODEL_ID = "parakeet-tdt-0.6b-v3"
+PARAKEET_MODEL_LABEL = "Parakeet TDT v3 int8 (~640 MB download)"
+
+ENGINE_HINT = ("Parakeet: near-instant on CPU, best for English. "
+               "No Bosnian, no custom dictionary biasing. "
+               "Whisper handles those.")
+
 LANG_CHOICES = [
     ("en", "English"), ("auto", "Auto-detect (any language)"),
     ("multi", "Mixed: English + Bosnian (detects per take)"),
@@ -198,10 +213,24 @@ class SettingsDialog(QDialog):
 
         g_model = QGroupBox("Speech recognition")
         f = QFormLayout(g_model)
+        self.cb_engine = QComboBox()
+        for val, label in ENGINE_CHOICES:
+            self.cb_engine.addItem(label, val)
+        cur_eng = str(cfg.get("engine", {}).get("engine", "auto")).strip().lower()
+        pos = self.cb_engine.findData(cur_eng)
+        self.cb_engine.setCurrentIndex(pos if pos >= 0 else 0)
+        f.addRow("Engine:", self.cb_engine)
+        self.lbl_engine_hint = QLabel(ENGINE_HINT)
+        self.lbl_engine_hint.setStyleSheet("color: gray; font-size: 11px;")
+        self.lbl_engine_hint.setWordWrap(True)
+        f.addRow("", self.lbl_engine_hint)
         self.cb_model = QComboBox()
         for val, label in MODEL_CHOICES:
             self.cb_model.addItem(label, val)
         cur = cfg.get("whisper", {}).get("model_size", "auto")
+        # remembered so switching to Parakeet and back (or saving while on
+        # Parakeet) can never write the Parakeet id into whisper.model_size
+        self._whisper_model_saved = cur
         pos = self.cb_model.findData(cur)
         self.cb_model.setCurrentIndex(pos if pos >= 0 else 0)
         f.addRow("Model:", self.cb_model)
@@ -211,12 +240,14 @@ class SettingsDialog(QDialog):
             except ImportError:
                 import device as _device
             tier = _device.detect()
+            self._tier = tier
             hint = (f"Auto = {tier.model_size} on {tier.device}"
                     f" ({tier.compute_type})")
             if getattr(tier, "amd_gpu", False):
                 hint += "\nAMD GPU — using CPU. DirectML planned."
         except Exception:
             hint = ""
+            self._tier = None
         if hint:
             lbl = QLabel(hint)
             lbl.setStyleSheet("color: gray; font-size: 11px;")
@@ -229,6 +260,17 @@ class SettingsDialog(QDialog):
         pos = self.cb_lang.findData(cur)
         self.cb_lang.setCurrentIndex(pos if pos >= 0 else 0)
         f.addRow("Language:", self.cb_lang)
+        # Amber honesty row: Parakeet + unsupported language never silently
+        # mis-transcribes — runtime falls back to Whisper and this says so.
+        self.lbl_engine_warn = QLabel("")
+        self.lbl_engine_warn.setStyleSheet(
+            "color: #b8860b; font-size: 11px; font-weight: bold;")
+        self.lbl_engine_warn.setWordWrap(True)
+        self.lbl_engine_warn.setVisible(False)
+        f.addRow("", self.lbl_engine_warn)
+        self.cb_engine.currentIndexChanged.connect(self._sync_engine_ui)
+        self.cb_lang.currentIndexChanged.connect(self._sync_engine_ui)
+        self._sync_engine_ui()
         v2.addWidget(g_model)
 
         # Visualizer
@@ -481,6 +523,54 @@ class SettingsDialog(QDialog):
         self.tbl.setItem(r, 0, QTableWidgetItem(k))
         self.tbl.setItem(r, 1, QTableWidgetItem(v))
 
+    def _sync_engine_ui(self):
+        """Engine combo drives the Model row + the honesty labels.
+        PARAKEET_LANGS comes from the engine module, so the warning can
+        never drift from what device.choose_engine() actually does."""
+        try:
+            from .engine_parakeet import PARAKEET_LANGS
+        except ImportError:
+            from engine_parakeet import PARAKEET_LANGS
+        eng = self.cb_engine.currentData()
+        lang = self.cb_lang.currentData()
+        if eng == "parakeet":
+            if self.cb_model.findData(PARAKEET_MODEL_ID) < 0:
+                current = self.cb_model.currentData()
+                if current:
+                    self._whisper_model_saved = current
+                self.cb_model.clear()
+                self.cb_model.addItem(PARAKEET_MODEL_LABEL, PARAKEET_MODEL_ID)
+            self.cb_model.setEnabled(False)
+        else:
+            if self.cb_model.findData(PARAKEET_MODEL_ID) >= 0 \
+                    or self.cb_model.count() == 0:
+                self.cb_model.clear()
+                for val, label in MODEL_CHOICES:
+                    self.cb_model.addItem(label, val)
+                pos = self.cb_model.findData(self._whisper_model_saved)
+                self.cb_model.setCurrentIndex(pos if pos >= 0 else 0)
+            self.cb_model.setEnabled(True)
+        hint = ENGINE_HINT
+        if eng == "auto" and getattr(self, "_tier", None) is not None:
+            try:
+                try:
+                    from . import device as _device
+                except ImportError:
+                    import device as _device
+                routed = _device.choose_engine("auto", self._tier, lang)
+                hint = (f"Auto picks {routed.title()} for this language "
+                        f"on this PC.\n{ENGINE_HINT}")
+            except Exception:
+                pass
+        self.lbl_engine_hint.setText(hint)
+        warn = ""
+        if eng == "parakeet" and lang not in PARAKEET_LANGS:
+            warn = (f"Parakeet can't transcribe "
+                    f"\u201c{self.cb_lang.currentText()}\u201d. "
+                    "Dictate will use Whisper for this language.")
+        self.lbl_engine_warn.setText(warn)
+        self.lbl_engine_warn.setVisible(bool(warn))
+
     def _del_row(self):
         r = self.tbl.currentRow()
         if r >= 0:
@@ -537,9 +627,15 @@ class SettingsDialog(QDialog):
         self.btn_mic_test.setEnabled(True)
 
     def _save(self):
+        eng_choice = self.cb_engine.currentData()
+        model_val = (self._whisper_model_saved if eng_choice == "parakeet"
+                     else self.cb_model.currentData())
         overlay = {
+            "engine": {
+                "engine": eng_choice,
+            },
             "whisper": {
-                "model_size": self.cb_model.currentData(),
+                "model_size": model_val,
                 "language": self.cb_lang.currentData(),
             },
             "overlay": {

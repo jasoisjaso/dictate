@@ -1,4 +1,19 @@
-"""faster-whisper inference + spoken-command post-processing."""
+"""faster-whisper inference + spoken-command post-processing.
+
+Two engines share this module's text pipeline (see docs/parakeet-engine.md):
+
+  TextPipeline          engine-agnostic post-processing base class — spoken
+                        punctuation, fillers, dictionary, transforms, casing,
+                        Ollama polish. Everything that makes Dictate feel like
+                        Dictate, run on the TEXT after the engine returns.
+  WhisperTranscriber    faster-whisper engine (all languages, prompts,
+                        hotwords, translate modes). GPU or CPU.
+  ParakeetTranscriber   sherpa-onnx NeMo transducer engine, CPU-first
+                        (src/engine_parakeet.py — inherits TextPipeline).
+  create_engine(cfg)    factory: routes via device.choose_engine() and
+                        guarantees a usable engine (Parakeet problems can
+                        never brick the app — falls back to Whisper).
+"""
 
 import logging
 import re
@@ -48,41 +63,20 @@ PUNCTUATION_LEXICON = _build_lexicon(None)
 _NO_SPACE_BEFORE = ".,?!:;)"
 
 
-class WhisperTranscriber:
-    """Thread-safe wrapper around one WhisperModel instance."""
+class TextPipeline:
+    """Engine-agnostic text post-processing, shared by both engines.
 
-    def __init__(self, cfg: dict):
-        w = cfg.get("whisper", {})
-        want_size = w.get("model_size", "auto")
-        want_dev = w.get("device", "auto")
-        want_ct = w.get("compute_type", "auto")
-        if "auto" in (want_size, want_dev, want_ct):
-            try:
-                from . import device as _device
-            except ImportError:
-                import device as _device
-            tier = _device.detect()
-            self.model_size = tier.model_size if want_size == "auto" else want_size
-            self.device = tier.device if want_dev == "auto" else want_dev
-            self.compute_type = tier.compute_type if want_ct == "auto" else want_ct
-        else:
-            self.model_size, self.device, self.compute_type = want_size, want_dev, want_ct
-        lang = w.get("language", "en")
-        self.apply_language(lang)
+    Owns every setting and pass that operates on the TRANSCRIPT rather than
+    the audio: spoken-punctuation lexicon, filler removal, cleanup levels,
+    personal dictionary (text replacement), regex transforms, casing,
+    auto-punctuation, Ollama polish and the translate hand-off flags.
+    Subclasses call _init_text_pipeline() AFTER apply_language() so
+    self.language is resolved (lexicon and filler list depend on it).
+    """
+
+    def _init_text_pipeline(self, cfg: dict, lang: str, *,
+                            auto_punct_when_auto: bool):
         self.lexicon = _build_lexicon(self.language)
-        self.beam_size = int(w.get("beam_size", 5))
-        self.initial_prompt = w.get("initial_prompt", "") or None
-        # Bosnian anchor: when dictating bs/hr/sr and the user has no custom
-        # prompt, anchor Whisper to ijekavian orthography with diacritics.
-        # Disable with [whisper] bs_anchor = false.
-        if (self.initial_prompt is None
-                and self.language in ("bs", "hr", "sr")
-                and bool(w.get("bs_anchor", True))):
-            try:
-                from . import lang_bs
-            except ImportError:
-                import lang_bs
-            self.initial_prompt = lang_bs.ANCHOR_PROMPT
         cl = cfg.get("cleanup", {})
         self.remove_fillers = bool(cl.get("remove_fillers", True))
         # Cleanup level: off | light | standard | high.
@@ -121,6 +115,257 @@ class WhisperTranscriber:
         self.ollama_endpoint = cl.get("ollama_endpoint", "http://127.0.0.1:11434")
         self.dictionary = {str(k): str(v)
                            for k, v in cfg.get("dictionary", {}).items()}
+        self.vad_enabled = bool(cfg.get("vad", {}).get("enabled", True))
+        self.vad_onset = float(cfg.get("vad", {}).get("onset_threshold", 0.5))
+        pp = cfg.get("post_processing", {})
+        self.casing = pp.get("casing", "sentence")
+        # auto_punctuation accepts true / false / "auto"; what "auto" means is
+        # the engine's call (auto_punct_when_auto) — small Whisper models skip
+        # punctuation so they want it, Parakeet punctuates natively.
+        raw_ap = pp.get("auto_punctuation", "auto")
+        if isinstance(raw_ap, str) and raw_ap.strip().lower() == "auto":
+            self.auto_punctuation = auto_punct_when_auto
+        else:
+            self.auto_punctuation = bool(raw_ap)
+        self.strip_short = bool(pp.get("strip_trailing_period_short",
+                                       pp.get("strip", True)))
+        self.transforms = cfg.get("transforms", []) or []
+        self._has_punctuation_payload = False
+        self._last_punct_payload = ""
+        # Translate-mode flags default off. WhisperTranscriber.apply_language
+        # (already called by its __init__) turns them on for the synthetic
+        # modes; Parakeet has no translate modes so the defaults stand.
+        if not hasattr(self, "translate_to_en"):
+            self.translate_to_en = False
+            self.translate_to_bs = False
+        if not hasattr(self, "_nonen_detected"):
+            self._nonen_detected = False
+            self._en_detected = False
+
+    def has_speech(self, audio_data: np.ndarray) -> bool:
+        """Silero VAD check used by the live auto-stop monitor."""
+        if audio_data.size < 512:
+            return False
+        try:
+            from faster_whisper.vad import VadOptions, get_speech_timestamps
+            ts = get_speech_timestamps(
+                audio_data, VadOptions(threshold=self.vad_onset))
+            return len(ts) > 0
+        except Exception as ex:
+            log.debug("vad check failed: %s", ex)
+            return True  # fail open so auto-stop never cuts off real speech
+
+    # ---- post-processing -----------------------------------------------
+
+    def post_process(self, text: str, profile: dict | None = None) -> str:
+        """profile comes from appcontext.resolve_profile() for the app that
+        had focus when recording started. verbatim=True keeps the words
+        exactly as spoken (terminals/IDEs); tone feeds the Ollama pass."""
+        if not text:
+            return ""
+        profile = profile or {}
+        # Speak-Bosnian-write-English: translate before any cleanup so the
+        # rest of the pipeline (fillers, casing, dictionary) works on the
+        # English text. Only fires when the take actually contained a
+        # non-English detection; pure English takes skip the round-trip.
+        # Fail-open: if Ollama can't translate, deliver the as-spoken text.
+        nonen = self._nonen_detected
+        self._nonen_detected = False
+        en_seen = self._en_detected
+        self._en_detected = False
+        want_en = getattr(self, "translate_to_en", False) and nonen
+        want_bs = getattr(self, "translate_to_bs", False) and en_seen
+        if want_en or want_bs:
+            try:
+                from . import cleanup as _cleanup_tr, device as _device_tr
+            except ImportError:
+                import cleanup as _cleanup_tr
+                import device as _device_tr
+            if want_en:
+                # bs->en: fastest small model is fine, English output is easy
+                if not getattr(self, "_translate_model_en", None):
+                    self._translate_model_en = (
+                        _device_tr.ollama_pick_translate_model(
+                            self.ollama_endpoint) or self.ollama_model)
+                    log.info("bs->en translate model: %s",
+                             self._translate_model_en)
+                translated = _cleanup_tr.ollama_translate_to_english(
+                    text, self._translate_model_en, self.ollama_endpoint,
+                    timeout=60.0)
+            else:
+                # en->bs: quality-first model, small ones butcher Bosnian
+                if not getattr(self, "_translate_model_bs", None):
+                    self._translate_model_bs = (
+                        _device_tr.ollama_pick_bs_translate_model(
+                            self.ollama_endpoint) or self.ollama_model)
+                    log.info("en->bs translate model: %s",
+                             self._translate_model_bs)
+                # 120s: covers a take that lands while the pre-warm is still
+                # mid-load; warm evals are a few seconds
+                translated = _cleanup_tr.ollama_translate_to_bosnian(
+                    text, self._translate_model_bs, self.ollama_endpoint,
+                    timeout=120.0)
+            if translated:
+                log.info("translated take to %s (%d -> %d chars)",
+                         "English" if want_en else "Bosnian",
+                         len(text), len(translated))
+                text = translated
+            else:
+                log.warning("translation unavailable — delivering as spoken")
+        verbatim = bool(profile.get("verbatim"))
+        # Track if the punctuation lexicon converted the whole input to
+        # punctuation/newlines (e.g. user said just "tačka" or "novi red").
+        # _fix_spacing would otherwise strip standalone \n to empty.
+        # Also track if ANY punctuation command fired (for strip_short).
+        original_text = text
+        self._has_punctuation_payload = False
+        self._last_punct_payload = ""
+        self._punct_command_fired = False
+        for phrase, repl in getattr(self, "lexicon", PUNCTUATION_LEXICON):
+            # eat punctuation whisper may have attached to the spoken keyword
+            before = text
+            text = re.sub(
+                rf"[\s,.]*\b{re.escape(phrase)}\b[.,]?",
+                repl.replace("\\", "\\\\"),
+                text, flags=re.IGNORECASE)
+            if text != before:
+                self._punct_command_fired = True
+        # If the punctuation lexicon consumed everything (input was just a
+        # punctuation command), preserve the payload so _fix_spacing doesn't
+        # eat it. Use raw text (not stripped) because \n is whitespace.
+        after_punct_words = re.findall(r"[\w']+", text)
+        if not after_punct_words and text:
+            self._has_punctuation_payload = True
+            self._last_punct_payload = text
+        level = getattr(self, "cleanup_level", "standard")
+        if verbatim or level == "off":
+            # terminals and editors get the words untouched: no filler
+            # stripping, no sentence casing, no trailing-period logic
+            return self._fix_spacing(text).strip(" ")
+        try:
+            from . import cleanup as _cleanup
+        except ImportError:
+            import cleanup as _cleanup
+        text = _cleanup.clean(text, remove_fillers=self.remove_fillers,
+                              dictionary=self.dictionary,
+                              filler_re=self.filler_re)
+        if level == "light":
+            # fillers + dictionary only: the user's words, just tidier.
+            # No transforms, no casing, no polish, no auto-punctuation.
+            return self._fix_spacing(text).strip(" ")
+        # Apply user-defined regex transforms (e.g. "gonna" -> "going to")
+        if self.transforms and not verbatim:
+            try:
+                from . import transforms as _t
+            except ImportError:
+                import transforms as _t
+            text = _t.apply_transforms(text, self.transforms)
+        # high forces the polish pass whenever a local Ollama is reachable;
+        # standard uses it only when the user/auto-probe enabled it
+        run_polish = self.ollama_polish or (level == "high"
+                                            and self.ollama_available)
+        if run_polish:
+            text = _cleanup.ollama_polish(
+                text, self.ollama_model, self.ollama_endpoint,
+                tone=profile.get("tone"))
+        text = self._fix_spacing(text)
+        text = self._apply_casing(text)
+        # Auto-punctuation: add trailing period + capitalise if enabled
+        if self.auto_punctuation:
+            try:
+                from . import auto_punct
+            except ImportError:
+                import auto_punct
+            text = auto_punct.add_punctuation(text)
+        # strip_short: remove trailing period from short utterances (< 3 words)
+        # BUT only if there are actual words AND the period wasn't explicitly
+        # spoken via a punctuation command (don't strip "tačka" -> ".")
+        words = re.findall(r"[\w']+", text)
+        if self.strip_short and len(words) < 3 and words:
+            # Don't strip the period if the user explicitly said "period"/"tačka"
+            if not self._punct_command_fired:
+                text = text.rstrip(".")
+        # Don't return empty if we had punctuation/newlines — _fix_spacing
+        # can strip standalone newlines to empty, so preserve them
+        if not text and self._has_punctuation_payload:
+            text = self._last_punct_payload
+        return text.strip(" ")
+
+    @staticmethod
+    def _fix_spacing(text: str) -> str:
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(rf" +([{re.escape(_NO_SPACE_BEFORE)}])", r"\1", text)
+        text = re.sub(r"\( ", "(", text)
+        text = re.sub(r"([.,?!:;])(?=[^\s.,?!:;)\d])", r"\1 ", text)
+        text = re.sub(r" *\n *", "\n", text)
+        return text.strip()
+
+    def _apply_casing(self, text: str) -> str:
+        mode = self.casing
+        if mode == "upper":
+            return text.upper()
+        if mode == "lower":
+            return text.lower()
+        if mode != "sentence":
+            return text
+        out = []
+        cap_next = True
+        for ch in text:
+            if cap_next and ch.isalpha():
+                out.append(ch.upper())
+                cap_next = False
+            else:
+                out.append(ch)
+            if ch in ".!?\n":
+                cap_next = True
+        return "".join(out)
+
+
+class WhisperTranscriber(TextPipeline):
+    """Thread-safe wrapper around one WhisperModel instance."""
+
+    engine_name = "whisper"
+
+    def __init__(self, cfg: dict, tier=None):
+        w = cfg.get("whisper", {})
+        want_size = w.get("model_size", "auto")
+        want_dev = w.get("device", "auto")
+        want_ct = w.get("compute_type", "auto")
+        if "auto" in (want_size, want_dev, want_ct):
+            if tier is None:
+                # tier may be passed in by create_engine() so startup only
+                # probes the hardware once
+                try:
+                    from . import device as _device
+                except ImportError:
+                    import device as _device
+                tier = _device.detect()
+            self.model_size = tier.model_size if want_size == "auto" else want_size
+            self.device = tier.device if want_dev == "auto" else want_dev
+            self.compute_type = tier.compute_type if want_ct == "auto" else want_ct
+        else:
+            self.model_size, self.device, self.compute_type = want_size, want_dev, want_ct
+        lang = w.get("language", "en")
+        self.apply_language(lang)
+        self.beam_size = int(w.get("beam_size", 5))
+        self.initial_prompt = w.get("initial_prompt", "") or None
+        # Bosnian anchor: when dictating bs/hr/sr and the user has no custom
+        # prompt, anchor Whisper to ijekavian orthography with diacritics.
+        # Disable with [whisper] bs_anchor = false.
+        if (self.initial_prompt is None
+                and self.language in ("bs", "hr", "sr")
+                and bool(w.get("bs_anchor", True))):
+            try:
+                from . import lang_bs
+            except ImportError:
+                import lang_bs
+            self.initial_prompt = lang_bs.ANCHOR_PROMPT
+        # "auto" auto-punctuation: on only for the small CPU-tier models that
+        # habitually return unpunctuated text; the large models punctuate
+        # natively and double-processing them just adds noise.
+        self._init_text_pipeline(
+            cfg, lang,
+            auto_punct_when_auto=self.model_size in ("tiny", "base", "small"))
         # spelling boost: nudge Whisper toward the user's proper nouns via
         # faster-whisper's dedicated `hotwords` channel. Unlike initial_prompt
         # (which the model treats as preceding TEXT and will happily imitate,
@@ -130,27 +375,9 @@ class WhisperTranscriber:
         if self.dictionary:
             terms = list(dict.fromkeys(self.dictionary.values()))[:40]
             self.hotwords = ", ".join(terms)
-        self.vad_enabled = bool(cfg.get("vad", {}).get("enabled", True))
-        self.vad_onset = float(cfg.get("vad", {}).get("onset_threshold", 0.5))
-        pp = cfg.get("post_processing", {})
-        self.casing = pp.get("casing", "sentence")
-        # auto_punctuation accepts true / false / "auto".
-        #   auto: on only for the small CPU-tier models (tiny/base/small) that
-        #   habitually return unpunctuated text; the large models punctuate
-        #   natively and double-processing them just adds noise.
-        raw_ap = pp.get("auto_punctuation", "auto")
-        if isinstance(raw_ap, str) and raw_ap.strip().lower() == "auto":
-            self.auto_punctuation = self.model_size in ("tiny", "base", "small")
-        else:
-            self.auto_punctuation = bool(raw_ap)
-        self.strip_short = bool(pp.get("strip_trailing_period_short",
-                                       pp.get("strip", True)))
-        self.transforms = cfg.get("transforms", []) or []
         self._model = None
         self._lock = threading.Lock()
         self.active_device = None
-        self._has_punctuation_payload = False
-        self._last_punct_payload = ""
 
     def apply_language(self, lang: str):
         """Resolve a language SETTING (which may be a synthetic mode name)
@@ -463,180 +690,48 @@ class WhisperTranscriber:
         finally:
             self._lock.release()
 
-    def has_speech(self, audio_data: np.ndarray) -> bool:
-        """Silero VAD check used by the live auto-stop monitor."""
-        if audio_data.size < 512:
-            return False
-        try:
-            from faster_whisper.vad import VadOptions, get_speech_timestamps
-            ts = get_speech_timestamps(
-                audio_data, VadOptions(threshold=self.vad_onset))
-            return len(ts) > 0
-        except Exception as ex:
-            log.debug("vad check failed: %s", ex)
-            return True  # fail open so auto-stop never cuts off real speech
 
-    # ---- post-processing -----------------------------------------------
+def create_engine(cfg: dict):
+    """Build the right transcriber for this config + machine.
 
-    def post_process(self, text: str, profile: dict | None = None) -> str:
-        """profile comes from appcontext.resolve_profile() for the app that
-        had focus when recording started. verbatim=True keeps the words
-        exactly as spoken (terminals/IDEs); tone feeds the Ollama pass."""
-        if not text:
-            return ""
-        profile = profile or {}
-        # Speak-Bosnian-write-English: translate before any cleanup so the
-        # rest of the pipeline (fillers, casing, dictionary) works on the
-        # English text. Only fires when the take actually contained a
-        # non-English detection; pure English takes skip the round-trip.
-        # Fail-open: if Ollama can't translate, deliver the as-spoken text.
-        nonen = self._nonen_detected
-        self._nonen_detected = False
-        en_seen = self._en_detected
-        self._en_detected = False
-        want_en = getattr(self, "translate_to_en", False) and nonen
-        want_bs = getattr(self, "translate_to_bs", False) and en_seen
-        if want_en or want_bs:
-            try:
-                from . import cleanup as _cleanup_tr, device as _device_tr
-            except ImportError:
-                import cleanup as _cleanup_tr
-                import device as _device_tr
-            if want_en:
-                # bs->en: fastest small model is fine, English output is easy
-                if not getattr(self, "_translate_model_en", None):
-                    self._translate_model_en = (
-                        _device_tr.ollama_pick_translate_model(
-                            self.ollama_endpoint) or self.ollama_model)
-                    log.info("bs->en translate model: %s",
-                             self._translate_model_en)
-                translated = _cleanup_tr.ollama_translate_to_english(
-                    text, self._translate_model_en, self.ollama_endpoint,
-                    timeout=60.0)
-            else:
-                # en->bs: quality-first model, small ones butcher Bosnian
-                if not getattr(self, "_translate_model_bs", None):
-                    self._translate_model_bs = (
-                        _device_tr.ollama_pick_bs_translate_model(
-                            self.ollama_endpoint) or self.ollama_model)
-                    log.info("en->bs translate model: %s",
-                             self._translate_model_bs)
-                # 120s: covers a take that lands while the pre-warm is still
-                # mid-load; warm evals are a few seconds
-                translated = _cleanup_tr.ollama_translate_to_bosnian(
-                    text, self._translate_model_bs, self.ollama_endpoint,
-                    timeout=120.0)
-            if translated:
-                log.info("translated take to %s (%d -> %d chars)",
-                         "English" if want_en else "Bosnian",
-                         len(text), len(translated))
-                text = translated
-            else:
-                log.warning("translation unavailable — delivering as spoken")
-        verbatim = bool(profile.get("verbatim"))
-        # Track if the punctuation lexicon converted the whole input to
-        # punctuation/newlines (e.g. user said just "tačka" or "novi red").
-        # _fix_spacing would otherwise strip standalone \n to empty.
-        # Also track if ANY punctuation command fired (for strip_short).
-        original_text = text
-        self._has_punctuation_payload = False
-        self._last_punct_payload = ""
-        self._punct_command_fired = False
-        for phrase, repl in getattr(self, "lexicon", PUNCTUATION_LEXICON):
-            # eat punctuation whisper may have attached to the spoken keyword
-            before = text
-            text = re.sub(
-                rf"[\s,.]*\b{re.escape(phrase)}\b[.,]?",
-                repl.replace("\\", "\\\\"),
-                text, flags=re.IGNORECASE)
-            if text != before:
-                self._punct_command_fired = True
-        # If the punctuation lexicon consumed everything (input was just a
-        # punctuation command), preserve the payload so _fix_spacing doesn't
-        # eat it. Use raw text (not stripped) because \n is whitespace.
-        after_punct_words = re.findall(r"[\w']+", text)
-        if not after_punct_words and text:
-            self._has_punctuation_payload = True
-            self._last_punct_payload = text
-        level = getattr(self, "cleanup_level", "standard")
-        if verbatim or level == "off":
-            # terminals and editors get the words untouched: no filler
-            # stripping, no sentence casing, no trailing-period logic
-            return self._fix_spacing(text).strip(" ")
+    Routing lives in device.choose_engine() (pure, table-tested); this
+    factory adds the fail-open guarantees: a missing sherpa-onnx wheel or an
+    unsupported language can never brick the app — we fall back to Whisper
+    and remember why in `engine_note` so the tray can tell the user once.
+    """
+    try:
+        from . import device as _device
+    except ImportError:
+        import device as _device
+    eng_cfg = str(cfg.get("engine", {}).get("engine", "auto")).strip().lower()
+    lang = cfg.get("whisper", {}).get("language", "en")
+    note = None
+    tier = None
+    choice = "whisper"
+    if eng_cfg != "whisper":
+        tier = _device.detect()
+        choice = _device.choose_engine(eng_cfg, tier, lang)
+        if eng_cfg == "parakeet" and choice == "whisper":
+            note = (f"Parakeet doesn't support your language setting "
+                    f"({lang!r}) — using Whisper for it instead.")
+    if choice == "parakeet":
         try:
-            from . import cleanup as _cleanup
+            from . import engine_parakeet as _pk
         except ImportError:
-            import cleanup as _cleanup
-        text = _cleanup.clean(text, remove_fillers=self.remove_fillers,
-                              dictionary=self.dictionary,
-                              filler_re=self.filler_re)
-        if level == "light":
-            # fillers + dictionary only: the user's words, just tidier.
-            # No transforms, no casing, no polish, no auto-punctuation.
-            return self._fix_spacing(text).strip(" ")
-        # Apply user-defined regex transforms (e.g. "gonna" -> "going to")
-        if self.transforms and not verbatim:
-            try:
-                from . import transforms as _t
-            except ImportError:
-                import transforms as _t
-            text = _t.apply_transforms(text, self.transforms)
-        # high forces the polish pass whenever a local Ollama is reachable;
-        # standard uses it only when the user/auto-probe enabled it
-        run_polish = self.ollama_polish or (level == "high"
-                                            and self.ollama_available)
-        if run_polish:
-            text = _cleanup.ollama_polish(
-                text, self.ollama_model, self.ollama_endpoint,
-                tone=profile.get("tone"))
-        text = self._fix_spacing(text)
-        text = self._apply_casing(text)
-        # Auto-punctuation: add trailing period + capitalise if enabled
-        if self.auto_punctuation:
-            try:
-                from . import auto_punct
-            except ImportError:
-                import auto_punct
-            text = auto_punct.add_punctuation(text)
-        # strip_short: remove trailing period from short utterances (< 3 words)
-        # BUT only if there are actual words AND the period wasn't explicitly
-        # spoken via a punctuation command (don't strip "tačka" -> ".")
-        words = re.findall(r"[\w']+", text)
-        if self.strip_short and len(words) < 3 and words:
-            # Don't strip the period if the user explicitly said "period"/"tačka"
-            if not self._punct_command_fired:
-                text = text.rstrip(".")
-        # Don't return empty if we had punctuation/newlines — _fix_spacing
-        # can strip standalone newlines to empty, so preserve them
-        if not text and self._has_punctuation_payload:
-            text = self._last_punct_payload
-        return text.strip(" ")
-
-    @staticmethod
-    def _fix_spacing(text: str) -> str:
-        text = re.sub(r"[ \t]+", " ", text)
-        text = re.sub(rf" +([{re.escape(_NO_SPACE_BEFORE)}])", r"\1", text)
-        text = re.sub(r"\( ", "(", text)
-        text = re.sub(r"([.,?!:;])(?=[^\s.,?!:;)\d])", r"\1 ", text)
-        text = re.sub(r" *\n *", "\n", text)
-        return text.strip()
-
-    def _apply_casing(self, text: str) -> str:
-        mode = self.casing
-        if mode == "upper":
-            return text.upper()
-        if mode == "lower":
-            return text.lower()
-        if mode != "sentence":
-            return text
-        out = []
-        cap_next = True
-        for ch in text:
-            if cap_next and ch.isalpha():
-                out.append(ch.upper())
-                cap_next = False
-            else:
-                out.append(ch)
-            if ch in ".!?\n":
-                cap_next = True
-        return "".join(out)
+            import engine_parakeet as _pk
+        if _pk.sherpa_available():
+            eng = _pk.ParakeetTranscriber(cfg)
+            eng.engine_note = note
+            log.info("engine: parakeet (cfg=%s, lang=%s)", eng_cfg, lang)
+            return eng
+        # Only nag about the fallback if the user asked for Parakeet by name;
+        # a silent auto-pick downgrade would just confuse people.
+        if eng_cfg == "parakeet":
+            note = ("Parakeet isn't available on this PC (sherpa-onnx "
+                    "missing or unsupported CPU) — using Whisper.")
+        log.warning("parakeet selected but sherpa-onnx unavailable — "
+                    "falling back to whisper")
+    eng = WhisperTranscriber(cfg, tier=tier)
+    eng.engine_note = note
+    log.info("engine: whisper (cfg=%s, lang=%s)", eng_cfg, lang)
+    return eng

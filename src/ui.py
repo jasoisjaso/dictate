@@ -26,7 +26,7 @@ from . import appcontext, model_lifecycle, win32_input
 from .app_states import IDLE, LOADING, MODE_LABELS, MODE_NAMES, RECORDING
 from .audio import AudioRecorder
 from .delivery import TextDelivery
-from .engine import WhisperTranscriber
+from .engine import WhisperTranscriber, create_engine
 from .history import History
 from .hotkeys import HotkeyController, pretty_key
 from .model_lifecycle import DownloadProgressUI
@@ -64,7 +64,9 @@ class DictationTrayApp(QObject, SessionMixin):
         # Bosnian tray + toasts), or forced via [ui] language = "en"/"bs"
         from .i18n import Translator, resolve_ui_language
         self.tr = Translator(resolve_ui_language(cfg))
-        self.engine = WhisperTranscriber(cfg)
+        # Engine routing (whisper vs parakeet) lives in create_engine();
+        # fail-open — a Parakeet problem always lands us on Whisper.
+        self.engine = create_engine(cfg)
         self.recorder = AudioRecorder(
             input_device=cfg.get("audio", {}).get("input_device"))
         self.overlay = WaveformOverlay(style=cfg.get("overlay", {}).get("style", "equalizer"))
@@ -253,7 +255,9 @@ class DictationTrayApp(QObject, SessionMixin):
                                        QListWidget, QListWidgetItem,
                                        QPushButton, QVBoxLayout)
         dlg = QDialog()
-        dlg.setWindowTitle("Dictate — History (this session)")
+        dlg.setWindowTitle(
+            "Dictate — History (this session · "
+            f"{getattr(self.engine, 'engine_name', 'whisper').title()})")
         dlg.setMinimumSize(480, 360)
         v = QVBoxLayout(dlg)
         items = self.history.items()
@@ -331,11 +335,14 @@ class DictationTrayApp(QObject, SessionMixin):
         self.engine.dictionary = {str(k): str(v) for k, v in
                                   self.cfg.get("dictionary", {}).items()}
         # refresh the hotwords spelling boost so dictionary edits apply now
-        if self.engine.dictionary:
-            terms = list(dict.fromkeys(self.engine.dictionary.values()))[:40]
-            self.engine.hotwords = ", ".join(terms)
-        else:
-            self.engine.hotwords = None
+        # (Whisper only — Parakeet has no recognition-biasing channel; its
+        # dictionary hits still apply as text replacement above)
+        if getattr(self.engine, "engine_name", "whisper") == "whisper":
+            if self.engine.dictionary:
+                terms = list(dict.fromkeys(self.engine.dictionary.values()))[:40]
+                self.engine.hotwords = ", ".join(terms)
+            else:
+                self.engine.hotwords = None
         self.engine.apply_language(lang)
         # language change also swaps the punctuation lexicon + UI language
         from .engine import _build_lexicon
@@ -350,7 +357,11 @@ class DictationTrayApp(QObject, SessionMixin):
         # nothing to the running engine (the "Gmail has no full stops" bug).
         pp = self.cfg.get("post_processing", {})
         raw_ap = pp.get("auto_punctuation", "auto")
-        if isinstance(raw_ap, str) and raw_ap.strip().lower() == "auto":
+        if getattr(self.engine, "engine_name", "whisper") == "parakeet":
+            # Parakeet punctuates natively; our heuristic on top of it
+            # double-punctuates, so it stays off no matter the setting.
+            self.engine.auto_punctuation = False
+        elif isinstance(raw_ap, str) and raw_ap.strip().lower() == "auto":
             self.engine.auto_punctuation = self.engine.model_size in (
                 "tiny", "base", "small")
         else:
@@ -362,10 +373,27 @@ class DictationTrayApp(QObject, SessionMixin):
         vis_style = self.cfg.get("overlay", {}).get("style", "equalizer")
         self.overlay.set_style(vis_style)
         want_model = self.cfg.get("whisper", {}).get("model_size", "auto")
-        if want_model not in ("auto", self.engine.model_size):
+        if (getattr(self.engine, "engine_name", "whisper") == "whisper"
+                and want_model not in ("auto", self.engine.model_size)):
             self.tray.showMessage(
                 "Dictate", "Model change takes effect after you restart Dictate.",
                 QSystemTrayIcon.Information, 5000)
+        # Engine switch needs a full model load — restart, same as a model
+        # change. Compare what the router would pick NOW against what runs.
+        try:
+            from . import device as _device
+            want_engine = str(self.cfg.get("engine", {}).get(
+                "engine", "auto")).strip().lower()
+            routed = _device.choose_engine(
+                want_engine, _device.detect(),
+                self.cfg.get("whisper", {}).get("language", "en"))
+            if routed != getattr(self.engine, "engine_name", "whisper"):
+                self.tray.showMessage(
+                    "Dictate",
+                    "Engine change takes effect after you restart Dictate.",
+                    QSystemTrayIcon.Information, 5000)
+        except Exception:
+            log.debug("engine-change check failed", exc_info=True)
 
     def _start_hotkeys(self):
         names = {
@@ -390,6 +418,24 @@ class DictationTrayApp(QObject, SessionMixin):
         self.hotkeys.start()
 
     def _preload_model(self):
+        ok = model_lifecycle.preload(
+            self.engine,
+            self._sig_dl_start.emit, self._sig_dl_progress.emit,
+            self._sig_dl_done.emit,
+            self._sig_model_ready.emit, self._sig_error.emit)
+        if ok or getattr(self.engine, "engine_name", "whisper") != "parakeet":
+            return
+        # Parakeet couldn't start (download failed, old CPU without AVX2,
+        # broken wheel). Fall back to Whisper for this session — the app must
+        # never be bricked by the optional engine. Safe to swap here: we're
+        # still LOADING, nothing else touches self.engine until ready.
+        log.warning("parakeet failed to start — falling back to Whisper "
+                    "for this session")
+        self.engine = WhisperTranscriber(self.cfg)
+        self.engine.engine_note = (
+            "Parakeet couldn't start on this PC, so Dictate is using "
+            "Whisper this session. Pick Whisper in Settings to stop "
+            "seeing this, or reselect Parakeet to retry the download.")
         model_lifecycle.preload(
             self.engine,
             self._sig_dl_start.emit, self._sig_dl_progress.emit,
@@ -424,6 +470,16 @@ class DictationTrayApp(QObject, SessionMixin):
             QTimer.singleShot(4500, lambda: self.tray.showMessage(
                 self.tr("crash_title"), note,
                 QSystemTrayIcon.Warning, 10000))
+        # One-time engine note (Parakeet fell back to Whisper, or an
+        # unsupported language forced Whisper): calm info balloon after the
+        # ready one, never an error — the app is working fine.
+        eng_note = getattr(self.engine, "engine_note", None)
+        if eng_note:
+            self.engine.engine_note = None
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(6000, lambda: self.tray.showMessage(
+                "Dictate — speech engine", eng_note,
+                QSystemTrayIcon.Information, 10000))
         # Update check: throttled (max ~1 HTTP call/day), fail-silent,
         # runs off the GUI thread. Result crosses back via signal.
         threading.Thread(target=self._update_check_worker, daemon=True).start()

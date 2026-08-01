@@ -29,6 +29,18 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     cfg = config_mod.load()
+    # DICTATE_SMOKE_ENGINE=parakeet|whisper|auto forces the engine so the
+    # same smoke can prove BOTH engines boot the full app on this machine.
+    forced = os.environ.get("DICTATE_SMOKE_ENGINE")
+    if forced:
+        cfg.setdefault("engine", {})["engine"] = forced
+    if forced == "parakeet":
+        # The machine's real settings may sit on a Whisper-only mode (bs,
+        # bs2en, multi...) and the router would then honestly fall back —
+        # that honesty is unit-tested in test_parakeet_engine.py. THIS smoke
+        # asks a different question ("does Parakeet boot the whole app?"),
+        # so pin a language Parakeet supports.
+        cfg.setdefault("whisper", {})["language"] = "en"
     tray_app = DictationTrayApp(cfg, app)
 
     n = 0
@@ -58,8 +70,27 @@ def main():
         QTimer.singleShot(500, poll_ready)
 
     def run_checks():
+        try:
+            _run_checks_inner()
+        except Exception as ex:
+            # An assert inside a Qt timer callback only prints — the event
+            # loop keeps running and the smoke HANGS. Exit loudly instead.
+            print(ex)
+            app.exit(3)
+            return
+        tray_app._quit()
+
+    def _run_checks_inner():
         ok("booted to IDLE (model loaded)", tray_app.state == IDLE)
         ok("engine reports a device", bool(tray_app.engine.active_device))
+        ok("engine identifies itself",
+           getattr(tray_app.engine, "engine_name", "") in
+           ("whisper", "parakeet"))
+        if forced in ("whisper", "parakeet"):
+            ok(f"forced engine honoured ({forced})",
+               tray_app.engine.engine_name == forced)
+        ok("engine note is settled",
+           hasattr(tray_app.engine, "engine_note"))
 
         # mode cycle: full loop lands back on auto and updates the menu label
         for _ in range(4):
@@ -84,8 +115,6 @@ def main():
         tray_app._session_words = 42
         tray_app._update_stats_label()
         ok("stats label updates", "42" in tray_app.shell.act_stats.text())
-
-        tray_app._quit()
 
     QTimer.singleShot(500, poll_ready)
     rc = app.exec()

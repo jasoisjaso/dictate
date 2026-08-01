@@ -44,6 +44,39 @@ def choose_tier(cuda: bool, vram_gb: float) -> Tier:
     return Tier("cuda", "int8_float16", "base")
 
 
+def choose_engine(engine_cfg: str, tier: Tier, language: str) -> str:
+    """Which transcription engine to use — pure, table-tested.
+
+    engine_cfg: the [engine] engine setting ("auto" | "whisper" | "parakeet";
+    anything unknown is treated as auto). language: the RAW [whisper]
+    language setting, so synthetic modes ("auto"/"multi"/"bs2en"/"en2bs")
+    correctly count as unsupported — they all depend on bs recognition.
+
+    Rules, in order (docs/parakeet-engine.md §3.3):
+      1. Explicit "whisper" always wins.
+      2. Explicit "parakeet" wins for its 25 languages; an unsupported
+         language forces Whisper anyway (the UI shows why) — never a
+         silent wrong-language result.
+      3. auto: CPU tier + supported language -> parakeet (10-30x realtime
+         beats Whisper small's 2-4x). CUDA tier -> whisper (large-v3-turbo
+         with prompts + dictionary biasing is already excellent there).
+    """
+    try:
+        from .engine_parakeet import PARAKEET_LANGS
+    except ImportError:
+        from engine_parakeet import PARAKEET_LANGS
+    supported = language in PARAKEET_LANGS
+    cfg = str(engine_cfg or "auto").strip().lower()
+    if cfg == "whisper":
+        return "whisper"
+    if cfg == "parakeet":
+        return "parakeet" if supported else "whisper"
+    # auto (and anything unrecognised)
+    if tier.device != "cuda" and supported:
+        return "parakeet"
+    return "whisper"
+
+
 def _cuda_available() -> bool:
     try:
         import ctranslate2
@@ -108,14 +141,18 @@ def _cpu_cores() -> int:
     return os.cpu_count() or 2
 
 
-def streaming_ok(tier: Tier) -> bool:
+def streaming_ok(tier: Tier, engine: str = "whisper") -> bool:
     """Chunked while-you-talk transcription.
 
-    GPU: always fine — chunk commits take a fraction of realtime.
-    CPU: only worth it when the machine has real parallel headroom AND a
-    model small enough that a 14s chunk transcribes in well under 14s;
+    Parakeet: always fine — 10-30x realtime on plain CPUs means a 14s chunk
+    decodes in well under a second; commits can't pile up.
+    Whisper GPU: always fine — chunk commits take a fraction of realtime.
+    Whisper CPU: only worth it when the machine has real parallel headroom
+    AND a model small enough that a 14s chunk transcribes in well under 14s;
     otherwise commits pile up behind each other and stall the final result.
     """
+    if engine == "parakeet":
+        return True
     if tier.device == "cuda":
         return True
     return _cpu_cores() >= 8 and tier.model_size in ("tiny", "base", "small")

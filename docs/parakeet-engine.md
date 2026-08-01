@@ -2,6 +2,11 @@
 
 Status: approved 2026-08-01. Target release: v1.6.0.
 Prerequisite: the ui.py split (see Rollout, Phase 0).
+Progress: Phase 0 (ui split) and Phase 1 (engine + routing + settings UI)
+both shipped 2026-08-01. Verified end-to-end on real hardware: model
+download 18s, load 1.6s, 19x realtime decode on CPU, word-perfect transcript
+(tests/manual_parakeet_e2e.py). Next: Phase 2, the Croatian-vs-Bosnian
+real-mic A/B.
 
 ## 1. Why a second engine
 
@@ -164,7 +169,7 @@ Behaviour:
 
     [parakeet]
     model_dir = ""          # optional override, default: models cache
-    num_threads = 0         # 0 = sherpa-onnx default
+    num_threads = 0         # 0 = auto (up to 4 CPU threads)
 
 [whisper] keeps its meaning untouched, so existing user configs and every
 current test stay valid.

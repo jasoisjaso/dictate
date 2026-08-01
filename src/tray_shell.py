@@ -107,8 +107,12 @@ class TrayShell:
         amd_note = ""
         if getattr(app, "_amd_note", "") and app.engine.active_device == "cpu":
             amd_note = app._amd_note
-        self.tray.setToolTip(f"Dictate — {label}\n{app._trigger_hint()}")
-        self.act_status.setText(f"{label}  ·  {app.engine.model_size}{dev}{amd_note}")
+        # Engine name in tooltip + status row so a screenshot in a bug
+        # report identifies the engine for free (Whisper vs Parakeet).
+        eng = getattr(app.engine, "engine_name", "whisper").title()
+        self.tray.setToolTip(f"Dictate — {label} · {eng}\n{app._trigger_hint()}")
+        self.act_status.setText(
+            f"{label}  ·  {eng}: {app.engine.model_size}{dev}{amd_note}")
         if hasattr(self, "act_hint"):
             self.act_hint.setText(app._trigger_hint())
         self.update_mode_label(MODE_LABELS[app._dict_mode])

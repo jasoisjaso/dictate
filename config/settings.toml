@@ -3,6 +3,15 @@
 # %LOCALAPPDATA%\TranscribeDictate\settings.toml (created by the Settings window)
 # and override anything here.
 
+[engine]
+engine = "auto"        # auto | whisper | parakeet
+                       # Which speech engine transcribes your voice.
+                       # auto: Parakeet on CPU-only PCs for its 25 European
+                       # languages (near-instant, great English), Whisper
+                       # everywhere else. Whisper always handles Bosnian,
+                       # Serbian, the translate/mixed modes and custom
+                       # dictionary spelling boosts — Parakeet can't.
+
 [whisper]
 model_size = "auto"    # auto | tiny | base | small | medium | large-v3 | large-v3-turbo | distil-large-v3
 device = "auto"        # auto | cuda | cpu   (auto detects your GPU and picks the best)
@@ -10,6 +19,12 @@ compute_type = "auto"  # auto | float16 | int8_float16 | int8
 language = "en"        # "en", another ISO code (de, es, fr, ...), or "auto" to detect
 beam_size = 5
 initial_prompt = ""
+
+[parakeet]
+model_dir = ""         # optional override; default is the models cache next
+                       # to the Whisper models (~640 MB, downloaded the first
+                       # time the engine is actually selected)
+num_threads = 0        # 0 = auto (up to 4 CPU threads)
 
 [vad]
 enabled = true
