@@ -22,7 +22,7 @@ import time
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
-from . import appcontext, model_lifecycle, win32_input
+from . import appcontext, input_backend, model_lifecycle
 from .app_states import IDLE, LOADING, MODE_LABELS, MODE_NAMES, RECORDING
 from .audio import AudioRecorder
 from .delivery import TextDelivery
@@ -229,7 +229,7 @@ class DictationTrayApp(QObject, SessionMixin):
         if self.state != IDLE:
             return
         if self.last_injected_len > 0:
-            win32_input.inject_backspaces(self.last_injected_len)
+            input_backend.backspaces(self.last_injected_len)
             self.last_injected_len = 0
             self.last_injected_text = ""
         self._begin_recording()

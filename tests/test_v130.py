@@ -10,7 +10,7 @@ import i18n
 import lang_bs
 import voice_commands
 from engine import WhisperTranscriber, _build_lexicon
-from win32_input import injection_suspect
+from input_backend import injection_suspect
 
 BASE = {"whisper": {"model_size": "small", "device": "cpu",
                     "compute_type": "int8"}}

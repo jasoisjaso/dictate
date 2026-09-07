@@ -2,7 +2,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from win32_input import choose_injection
+from input_backend import choose_injection
 
 
 def test_short_text_is_typed():

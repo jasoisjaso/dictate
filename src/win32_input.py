@@ -68,38 +68,10 @@ def configure_cuda_dll_search_paths():
     return registered
 
 
-def injection_suspect(sent: int, expected: int) -> bool:
-    """True when SendInput delivered fewer events than requested, the
-    classic sign of an elevated or secure target window swallowing input.
-    The caller then falls back to putting the text on the clipboard so the
-    dictation is never lost."""
-    return sent < expected
-
-
-def choose_injection(text: str, mode: str = "auto",
-                     paste_threshold: int = 300,
-                     prefer_type: bool = False) -> str:
-    """'type' (SendInput per char) or 'paste' (clipboard + Ctrl+V).
-
-    Typing is invisible to the clipboard and feels native for short bursts.
-    Pasting is instant for long text and — crucially — the only safe option
-    for multi-line output in auto mode, because a typed Enter can fire
-    "send" in chat apps before the message is complete.
-
-    prefer_type: terminals (Windows Terminal, conhost, PuTTY...) reliably
-    accept typed Unicode input but are flaky about a synthesized Ctrl+V
-    (some builds ignore injected keys without scan codes, some bind the
-    shortcut differently, some treat ^V as a literal control char). For a
-    terminal-profile window, single-line text of any length is typed;
-    only multi-line text still pastes.
-    """
-    if mode in ("type", "paste"):
-        return mode
-    if "\n" in text:
-        return "paste"
-    if prefer_type:
-        return "type"
-    return "paste" if len(text) > paste_threshold else "type"
+# choose_injection() and injection_suspect() used to live here. They are pure
+# decision logic with no Win32 in them, so they moved up into the shared
+# Injection interface (src/input_backend.py, docs/adr/0001) where both
+# backends and their tests can reach them. Nothing platform-specific was lost.
 
 
 # ---- SendInput Unicode injection -------------------------------------------
@@ -390,6 +362,18 @@ if IS_WINDOWS:
             _threading.Thread(target=_restore, daemon=True).start()
         return True
 
+    VK_A = 0x41
+
+    def select_all() -> bool:
+        """Press Ctrl+A — select everything in the focused field."""
+        _send_inputs([
+            _vk_event(VK_CONTROL),
+            _vk_event(VK_A),
+            _vk_event(VK_A, KEYEVENTF_KEYUP),
+            _vk_event(VK_CONTROL, KEYEVENTF_KEYUP),
+        ])
+        return True
+
     def inject_backspaces(count: int):
         """Press Backspace `count` times ("scratch that")."""
         if count <= 0:
@@ -411,6 +395,9 @@ else:
         return 0
 
     def inject_text_via_paste(text_string: str, restore_delay: float = 0.3):
+        return False
+
+    def select_all() -> bool:
         return False
 
     def inject_backspaces(count: int):

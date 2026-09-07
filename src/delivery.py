@@ -2,8 +2,9 @@
 expansion, and the voice-edit commands that operate on the last injection.
 
 Owns the last-injection bookkeeping (text, length, raw transcript) that the
-voice commands and re-record need. Injection strategy (type vs paste) stays
-in win32_input; this module decides per-result and never loses a dictation:
+voice commands and re-record need. Injection strategy (type vs paste) lives
+in input_backend, the one Injection interface (docs/adr/0001); this module
+decides per-result, names no operating system, and never loses a dictation:
 failed injection parks the text on the clipboard.
 """
 
@@ -12,7 +13,7 @@ import re
 
 from PySide6.QtWidgets import QApplication
 
-from . import voice_commands, win32_input
+from . import input_backend, voice_commands
 from .app_states import IDLE
 
 log = logging.getLogger("dictate.delivery")
@@ -43,7 +44,7 @@ class TextDelivery:
         # via SendInput is safer and more predictable.
         if text.strip() == "" and text:
             # Pure whitespace/newline — type it directly
-            win32_input.inject_text_native_unicode(text)
+            input_backend.inject_text(text)
             self.last_injected_len = len(text)
             self.last_injected_text = text
             return
@@ -74,16 +75,16 @@ class TextDelivery:
         if force_paste:
             how = "paste"
         else:
-            how = win32_input.choose_injection(payload, mode=app.inject_mode,
-                                               paste_threshold=app.paste_threshold,
-                                               prefer_type=in_terminal)
+            how = input_backend.choose_injection(payload, mode=app.inject_mode,
+                                                 paste_threshold=app.paste_threshold,
+                                                 prefer_type=in_terminal)
         delivered = True
         try:
             if how == "paste":
-                delivered = win32_input.inject_text_via_paste(payload)
+                delivered = input_backend.paste_text(payload)
             else:
-                injected = win32_input.inject_text_native_unicode(payload)
-                delivered = not win32_input.injection_suspect(injected, len(payload))
+                injected = input_backend.inject_text(payload)
+                delivered = not input_backend.injection_suspect(injected, len(payload))
         except Exception:
             log.exception("text injection raised — falling back to clipboard")
             delivered = False
@@ -119,7 +120,7 @@ class TextDelivery:
         """Execute a parsed voice-edit command against the last injection."""
         app = self.app
         if cmd.kind == "scratch":
-            win32_input.inject_backspaces(self.last_injected_len)
+            input_backend.backspaces(self.last_injected_len)
             self.last_injected_len = 0
             self.last_injected_text = ""
             app.overlay.flash_toast(app.tr("scratched"))
@@ -130,7 +131,7 @@ class TextDelivery:
             # can't eat text the user typed themselves between dictations
             back = min(back, self.last_injected_len)
             if back:
-                win32_input.inject_backspaces(back)
+                input_backend.backspaces(back)
                 self.last_injected_text = self.last_injected_text[:-back]
                 self.last_injected_len = len(self.last_injected_text)
             app.overlay.flash_toast(
@@ -143,13 +144,13 @@ class TextDelivery:
                 return
             trailing = old[len(old.rstrip()):]
             new = voice_commands.apply_recase(old.rstrip(), cmd.mode) + trailing
-            win32_input.inject_backspaces(len(old))
-            how = win32_input.choose_injection(new, mode=app.inject_mode,
-                                               paste_threshold=app.paste_threshold)
+            input_backend.backspaces(len(old))
+            how = input_backend.choose_injection(new, mode=app.inject_mode,
+                                                 paste_threshold=app.paste_threshold)
             if how == "paste":
-                win32_input.inject_text_via_paste(new)
+                input_backend.paste_text(new)
             else:
-                win32_input.inject_text_native_unicode(new)
+                input_backend.inject_text(new)
             self.last_injected_text = new
             self.last_injected_len = len(new)
             app.overlay.flash_toast({"upper": "ALL CAPS",
@@ -163,14 +164,14 @@ class TextDelivery:
                 return
             # Backspace the last injection, re-inject the raw words as-is
             if self.last_injected_len > 0:
-                win32_input.inject_backspaces(self.last_injected_len)
+                input_backend.backspaces(self.last_injected_len)
             payload = raw if raw.endswith("\n") else raw + " "
-            how = win32_input.choose_injection(payload, mode=app.inject_mode,
-                                               paste_threshold=app.paste_threshold)
+            how = input_backend.choose_injection(payload, mode=app.inject_mode,
+                                                 paste_threshold=app.paste_threshold)
             if how == "paste":
-                win32_input.inject_text_via_paste(payload)
+                input_backend.paste_text(payload)
             else:
-                win32_input.inject_text_native_unicode(payload)
+                input_backend.inject_text(payload)
             self.last_injected_text = payload
             self.last_injected_len = len(payload)
             app.overlay.flash_toast(app.tr("redone"))
@@ -197,7 +198,7 @@ class TextDelivery:
                 # No sentence boundary — delete the whole thing
                 to_delete = self.last_injected_len
             if to_delete > 0:
-                win32_input.inject_backspaces(to_delete)
+                input_backend.backspaces(to_delete)
                 self.last_injected_text = text[:len(text) - to_delete]
                 self.last_injected_len = len(self.last_injected_text)
             app.overlay.flash_toast(app.tr("deleted_sentence"))
@@ -205,12 +206,7 @@ class TextDelivery:
         if cmd.kind == "format":
             if cmd.mode == "select_all":
                 # Ctrl+A — select all text in the current field
-                win32_input._send_inputs([
-                    win32_input._vk_event(win32_input.VK_CONTROL),
-                    win32_input._vk_event(0x41),  # 'A'
-                    win32_input._vk_event(0x41, win32_input.KEYEVENTF_KEYUP),
-                    win32_input._vk_event(win32_input.VK_CONTROL, win32_input.KEYEVENTF_KEYUP),
-                ])
+                input_backend.select_all()
                 app.overlay.flash_toast(app.tr("selected_all"))
                 return
             old = self.last_injected_text
@@ -225,13 +221,13 @@ class TextDelivery:
                 new = f"*{stripped}*" + trailing
             else:
                 return
-            win32_input.inject_backspaces(len(old))
-            how = win32_input.choose_injection(new, mode=app.inject_mode,
-                                               paste_threshold=app.paste_threshold)
+            input_backend.backspaces(len(old))
+            how = input_backend.choose_injection(new, mode=app.inject_mode,
+                                                 paste_threshold=app.paste_threshold)
             if how == "paste":
-                win32_input.inject_text_via_paste(new)
+                input_backend.paste_text(new)
             else:
-                win32_input.inject_text_native_unicode(new)
+                input_backend.inject_text(new)
             self.last_injected_text = new
             self.last_injected_len = len(new)
             app.overlay.flash_toast(cmd.mode)
@@ -248,13 +244,13 @@ class TextDelivery:
                 app.overlay.flash_toast(f"didn't find '{cmd.old}'")
                 return
             new_payload = new_text + trailing
-            win32_input.inject_backspaces(len(old))
-            how = win32_input.choose_injection(new_payload, mode=app.inject_mode,
-                                               paste_threshold=app.paste_threshold)
+            input_backend.backspaces(len(old))
+            how = input_backend.choose_injection(new_payload, mode=app.inject_mode,
+                                                 paste_threshold=app.paste_threshold)
             if how == "paste":
-                win32_input.inject_text_via_paste(new_payload)
+                input_backend.paste_text(new_payload)
             else:
-                win32_input.inject_text_native_unicode(new_payload)
+                input_backend.inject_text(new_payload)
             self.last_injected_text = new_payload
             self.last_injected_len = len(new_payload)
             app.overlay.flash_toast(f"replaced '{cmd.old}' with '{cmd.new}'")
