@@ -77,6 +77,27 @@ class _Win32Backend:
         return self._mod.select_all()
 
 
+class _MacBackend:
+    """macOS Input Backend — Quartz unicode typing, NSPasteboard paste, Cmd+A."""
+
+    name = "macos"
+
+    def __init__(self, mod):
+        self._mod = mod
+
+    def inject_text(self, text: str) -> int:
+        return self._mod.inject_text_native_unicode(text)
+
+    def paste_text(self, text: str) -> bool:
+        return self._mod.inject_text_via_paste(text)
+
+    def backspaces(self, count: int) -> int:
+        return self._mod.inject_backspaces(count)
+
+    def select_all(self) -> bool:
+        return self._mod.select_all()
+
+
 class _NullBackend:
     """No Injection available on this platform. Never raises: the delivery
     path treats an undelivered result as a clipboard rescue, which is a far
@@ -106,6 +127,17 @@ def _resolve_backend():
         except ImportError:
             import win32_input
         return _Win32Backend(win32_input)
+    if IS_MACOS:
+        try:
+            try:
+                from . import mac_input
+            except ImportError:
+                import mac_input
+            return _MacBackend(mac_input)
+        except Exception:
+            # pyobjc missing or broken: a dictation parked on the clipboard
+            # beats a traceback on every result.
+            log.exception("macOS input backend unavailable")
     return _NullBackend()
 
 
