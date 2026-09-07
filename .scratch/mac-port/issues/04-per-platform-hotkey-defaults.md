@@ -16,16 +16,25 @@ See `docs/adr/0003-per-platform-hotkey-defaults.md`.
 
 **Blocked by:** 01 (Key lookup degrades instead of crashing).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] macOS push-to-talk defaults to Right Option; Windows still defaults to
-      Right Ctrl
-- [ ] No macOS default binds a key absent from the platform
-- [ ] Copy-last-dictation remains bound on macOS
-- [ ] Toggle, mode-cycle and re-record ship unbound on macOS and are
+- [x] macOS push-to-talk defaults to Right Option; Windows still defaults to
+      Right Ctrl. Verified end-to-end through `config.load()` on this machine:
+      effective `push_to_talk_key = "alt_r"` on Darwin
+- [x] No macOS default binds a key absent from the platform
+- [x] Copy-last-dictation remains bound on macOS (labelled `fn+F8`)
+- [x] Toggle, mode-cycle and re-record ship unbound on macOS and are
       settable in Settings for anyone who has turned on standard function
       keys
-- [ ] The Settings key-picker lists only platform-available keys
-- [ ] The per-platform default tables are covered by table-driven tests that
+- [x] The Settings key-picker lists only platform-available keys
+      (`key_is_bindable`), labels them in mac vocabulary (`key_label`), and
+      reads its defaults from the one hotkeys table (`default_key`)
+- [x] The per-platform default tables are covered by table-driven tests that
       run on every platform
-- [ ] Full suite green on macOS
+- [x] Full suite green on macOS (311 passed, 4 skipped)
+
+**Found while implementing:** the packaged `config/settings.toml` ships the
+Windows key names as *values*, so every `hk.get(action, <platform default>)`
+found `ctrl_r` and the platform table could never fire. Fixed with an explicit
+ordering — packaged defaults, then platform overlay, then the user's file — so
+a binding the user chose still wins everywhere.

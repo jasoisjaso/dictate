@@ -53,13 +53,55 @@ def available_keys(key_enum) -> dict:
     return table
 
 
+# Shipped defaults per platform (docs/adr/0003). An empty string means the
+# action ships UNBOUND: the key either doesn't exist on that keyboard, or a
+# bare press of it does something alarming (macOS ships fnState unset, so F6-F9
+# are media/brightness). Settings can still bind them.
+_DEFAULTS_WINDOWS = {
+    "push_to_talk_key": "ctrl_r",
+    "toggle_key": "f9",
+    "abort_key": "esc",
+    "copy_key": "f8",
+    "mode_cycle_key": "f7",
+    "pause_key": "pause",
+    "rerecord_key": "f6",
+}
+
+# Right Option, not Right Ctrl (absent on Apple laptops) and not Right Command
+# (a held Cmd turns every other keypress into a shortcut fired at the app you
+# are dictating into). copy_key stays bound as fn+F8: it is the rescue path
+# when text lands in the wrong window.
+_DEFAULTS_MACOS = {
+    "push_to_talk_key": "alt_r",
+    "toggle_key": "",
+    "abort_key": "esc",
+    "copy_key": "f8",
+    "mode_cycle_key": "",
+    "pause_key": "",
+    "rerecord_key": "",
+}
+
+
+def defaults_for(system: str) -> dict:
+    """The shipped hotkey defaults for an OS name (platform.system())."""
+    if str(system).strip().lower() == "darwin":
+        return dict(_DEFAULTS_MACOS)
+    return dict(_DEFAULTS_WINDOWS)
+
+
 def parse_key(name: str):
     """Config string -> pynput key object. Accepts single chars, <ctrl> style,
     and friendly names like ctrl_r / alt_r / f9 / space. A name this platform
-    has no key for falls back with a warning, same as an unknown name."""
+    has no key for falls back with a warning, same as an unknown name.
+
+    An empty name means the action is deliberately unbound and returns None —
+    falling back there would silently bind it to the push-to-talk key.
+    """
     from pynput import keyboard
 
-    n = name.strip().lower().strip("<>")
+    n = (name or "").strip().lower().strip("<>")
+    if not n:
+        return None
     special = available_keys(keyboard.Key)
     if n in special:
         return special[n]

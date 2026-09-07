@@ -58,10 +58,75 @@ _KEY_LABELS = {
     "space": "Space", "esc": "Esc", "tab": "Tab", "insert": "Insert",
 }
 
+# Apple keyboards name the same keys differently, and macOS ships
+# com.apple.keyboard.fnState unset, so a bare F-key press is media/brightness —
+# the label has to say fn+F8 or the user presses the wrong thing (ADR 0003).
+_KEY_LABELS_MACOS = {
+    "alt_r": "Right Option", "alt_l": "Left Option", "alt": "Option",
+    "cmd": "Command", "cmd_r": "Right Command",
+    "ctrl_r": "Right Control", "ctrl_l": "Left Control", "ctrl": "Control",
+    "shift_r": "Right Shift", "caps_lock": "Caps Lock",
+    "space": "Space", "esc": "Esc", "tab": "Tab",
+}
+
+UNBOUND_LABEL = "Not set"
+
+
+def key_label(name: str, system: str | None = None) -> str:
+    """Human label for a key name, in the vocabulary of `system`'s keyboard.
+
+    An empty name is an action shipped deliberately unbound; it says so
+    rather than rendering as a blank button.
+    """
+    n = (name or "").strip().lower()
+    if not n:
+        return UNBOUND_LABEL
+    if system is None:
+        system = platform.system()
+    if str(system).strip().lower() == "darwin":
+        if n in _KEY_LABELS_MACOS:
+            return _KEY_LABELS_MACOS[n]
+        if len(n) > 1 and n[0] == "f" and n[1:].isdigit():
+            return f"fn+F{n[1:]}"
+    if n in _KEY_LABELS:
+        return _KEY_LABELS[n]
+    return n.upper() if len(n) <= 3 else n.title()
+
+
+def default_key(action: str, system: str | None = None) -> str:
+    """The shipped default for a hotkey action. One source of truth: this
+    reads the hotkeys table rather than carrying its own copy."""
+    try:
+        from . import hotkeys as _hotkeys
+    except ImportError:
+        import hotkeys as _hotkeys
+    if system is None:
+        system = platform.system()
+    return _hotkeys.defaults_for(system).get(action, "")
+
+
+def key_is_bindable(name: str) -> bool:
+    """Whether this machine can actually listen for `name`. Unbound ("") is a
+    valid choice, so it binds; a name the platform's key enum lacks does not,
+    because binding it would silently never fire."""
+    n = (name or "").strip().lower()
+    if not n:
+        return True
+    if len(n) == 1:
+        return True
+    try:
+        from pynput import keyboard
+
+        from . import hotkeys as _hotkeys
+    except ImportError:
+        from pynput import keyboard
+
+        import hotkeys as _hotkeys
+    return n in _hotkeys.available_keys(keyboard.Key)
+
 
 def pretty_key(name: str) -> str:
-    n = name.strip().lower()
-    return _KEY_LABELS.get(n, n.upper() if len(n) <= 3 else n.title())
+    return key_label(name)
 
 
 class KeyCaptureButton(QPushButton):
@@ -173,15 +238,22 @@ class SettingsDialog(QDialog):
          else self.rb_toggle).setChecked(True)
         f.addRow(self.rb_ptt)
         f.addRow(self.rb_toggle)
-        self.btn_ptt = KeyCaptureButton(hk.get("push_to_talk_key", "ctrl_r"))
+        # Defaults come from the shipped per-platform table, not a second copy
+        # of the Windows names (docs/adr/0003).
+        self.btn_ptt = KeyCaptureButton(
+            hk.get("push_to_talk_key", default_key("push_to_talk_key")))
         f.addRow("Talk key:", self.btn_ptt)
-        self.btn_toggle = KeyCaptureButton(hk.get("toggle_key", "f9"))
+        self.btn_toggle = KeyCaptureButton(
+            hk.get("toggle_key", default_key("toggle_key")))
         f.addRow("Tap key:", self.btn_toggle)
-        self.btn_copy = KeyCaptureButton(hk.get("copy_key", "f8"))
+        self.btn_copy = KeyCaptureButton(
+            hk.get("copy_key", default_key("copy_key")))
         f.addRow("Copy last key:", self.btn_copy)
-        self.btn_mode = KeyCaptureButton(hk.get("mode_cycle_key", "f7"))
+        self.btn_mode = KeyCaptureButton(
+            hk.get("mode_cycle_key", default_key("mode_cycle_key")))
         f.addRow("Cycle modes key:", self.btn_mode)
-        self.btn_rerecord = KeyCaptureButton(hk.get("rerecord_key", "f6"))
+        self.btn_rerecord = KeyCaptureButton(
+            hk.get("rerecord_key", default_key("rerecord_key")))
         f.addRow("Re-record key:", self.btn_rerecord)
         v1.addWidget(g_trig)
 
@@ -660,7 +732,8 @@ class SettingsDialog(QDialog):
                 "mode": ("push_to_talk" if self.rb_ptt.isChecked() else "toggle"),
                 "push_to_talk_key": self.btn_ptt.key_name,
                 "toggle_key": self.btn_toggle.key_name,
-                "abort_key": self.cfg.get("hotkeys", {}).get("abort_key", "esc"),
+                "abort_key": self.cfg.get("hotkeys", {}).get(
+                    "abort_key", default_key("abort_key")),
                 "copy_key": self.btn_copy.key_name,
                 "mode_cycle_key": self.btn_mode.key_name,
                 "rerecord_key": self.btn_rerecord.key_name,

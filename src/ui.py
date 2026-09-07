@@ -16,6 +16,7 @@ report back through signals only.
 """
 
 import logging
+import platform
 import threading
 import time
 
@@ -29,6 +30,7 @@ from .delivery import TextDelivery
 from .engine import WhisperTranscriber, create_engine
 from .history import History
 from .hotkeys import HotkeyController, pretty_key
+from .hotkeys import defaults_for as hotkey_defaults_for
 from .model_lifecycle import DownloadProgressUI
 from .overlay import WaveformOverlay
 from .session import SessionMixin
@@ -118,14 +120,17 @@ class DictationTrayApp(QObject, SessionMixin):
         self._preview_stop = threading.Event()
 
         hk = cfg.get("hotkeys", {})
+        # Defaults are per-platform (docs/adr/0003): a Windows PC keyboard has
+        # keys a MacBook doesn't, and vice versa. The user's config always wins.
+        hk_def = hotkey_defaults_for(platform.system())
         self.mode = hk.get("mode", "push_to_talk").strip().lower()
-        self.ptt_name = hk.get("push_to_talk_key", "ctrl_r")
-        self.toggle_name = hk.get("toggle_key", "f9")
-        self.abort_name = hk.get("abort_key", "esc")
-        self.copy_name = hk.get("copy_key", "f8")
-        self.mode_cycle_name = hk.get("mode_cycle_key", "f7")
-        self.pause_name = hk.get("pause_key", "pause")
-        self.rerecord_name = hk.get("rerecord_key", "f6")
+        self.ptt_name = hk.get("push_to_talk_key", hk_def["push_to_talk_key"])
+        self.toggle_name = hk.get("toggle_key", hk_def["toggle_key"])
+        self.abort_name = hk.get("abort_key", hk_def["abort_key"])
+        self.copy_name = hk.get("copy_key", hk_def["copy_key"])
+        self.mode_cycle_name = hk.get("mode_cycle_key", hk_def["mode_cycle_key"])
+        self.pause_name = hk.get("pause_key", hk_def["pause_key"])
+        self.rerecord_name = hk.get("rerecord_key", hk_def["rerecord_key"])
 
         self.shell = TrayShell(self)
         self.tray = self.shell.tray

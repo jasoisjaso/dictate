@@ -36,6 +36,11 @@ silence_timeout = 2.0            # seconds of silence before auto-stop; 0 = off
 # mode = "push_to_talk"  -> hold a key, speak, release (like Wispr Flow)
 # mode = "toggle"        -> tap a key to start, auto-stops on silence (hands-free)
 mode = "push_to_talk"
+# The key names below are the WINDOWS defaults. On macOS they are replaced at
+# load time with keys an Apple keyboard actually has (docs/adr/0003): talk on
+# Right Option, no Pause binding, and toggle/cycle/re-record ship unbound
+# because a bare F6-F9 press is media/brightness there. Anything you set in
+# your own settings.toml still wins on every platform.
 push_to_talk_key = "ctrl_r"      # hold to talk. Right Ctrl avoids terminal/PowerShell/WSL clashes.
                                  # other good picks: "alt_r", "pause", "menu", "scroll_lock", "f9"
 toggle_key = "f9"                # used only when mode = "toggle"

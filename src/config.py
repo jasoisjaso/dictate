@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import re
 import sys
 try:
@@ -107,8 +108,37 @@ def _deep_merge(base: dict, over: dict) -> dict:
     return out
 
 
+def apply_platform_defaults(base: dict, system: str | None = None) -> dict:
+    """Overlay this platform's hotkey defaults onto the packaged config.
+
+    config/settings.toml ships key names chosen for a Windows PC keyboard as
+    *values*, not absences, so `hk.get(name, <platform default>)` could never
+    fall back — a Mac would be told to hold Right Ctrl, a key its keyboard
+    doesn't have (docs/adr/0003). The ordering that fixes it:
+
+        packaged defaults -> platform overlay -> the user's settings.toml
+
+    Only [hotkeys] is touched, and only the key bindings; `mode` and every
+    other section pass through. The user's own file is merged AFTER this, so
+    a binding they chose still wins on every platform.
+    """
+    try:
+        from . import hotkeys as _hotkeys
+    except ImportError:
+        import hotkeys as _hotkeys
+
+    if system is None:
+        system = platform.system()
+    out = _deep_merge(base, {})           # copy; never mutate the caller's dict
+    hk = dict(out.get("hotkeys", {}))
+    hk.update(_hotkeys.defaults_for(system))
+    out["hotkeys"] = hk
+    return out
+
+
 def load(defaults: dict | None = None) -> dict:
     base = defaults if defaults is not None else _read(_default_toml_path())
+    base = apply_platform_defaults(base)
     user = _read(paths.config_path())
     return _deep_merge(base, user)
 
