@@ -125,6 +125,10 @@ class WaveformOverlay(QWidget):
         self._opacity = 0.0
         self._anim_dir = 0
 
+        # Decided once: the overlay's show path is on the hot side of a
+        # dictation, and the platform does not change while running.
+        self._needs_pinning = platform.system() == "Darwin"
+
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
 
@@ -144,6 +148,24 @@ class WaveformOverlay(QWidget):
         screen = self.screen()
         if screen:
             self._dpi_scale = max(1.0, screen.devicePixelRatio())
+        self._pin_over_other_apps()
+
+    def _pin_over_other_apps(self):
+        """Keep the overlay on screen while another app has focus (macOS).
+
+        Dictate is menu-bar-only on macOS, so it is never frontmost, and Qt
+        hides a `Qt.Tool` window whenever its app deactivates — the overlay
+        would vanish exactly while it is needed. Qt exposes no API for the
+        fix, so it is applied to the NSWindow on every show; it is a no-op
+        on Windows, where the overlay already floats.
+        """
+        if not self._needs_pinning:
+            return
+        try:
+            from . import mac_window
+        except ImportError:
+            import mac_window
+        mac_window.pin_overlay(self)
 
     # ── public API ──────────────────────────────────────────────────────
 
