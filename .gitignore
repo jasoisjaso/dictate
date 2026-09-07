@@ -1,5 +1,6 @@
 # venvs
 .venv-win/
+.venv-mac/
 venv/
 .venv/
 
