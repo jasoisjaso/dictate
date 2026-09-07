@@ -11,12 +11,12 @@ be demonstrated until it lands.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Building the key table on macOS no longer raises; the hotkey listener
+- [x] Building the key table on macOS no longer raises; the hotkey listener
       starts and the app reaches its ready state
-- [ ] A key name that does not exist on the running platform logs the
+- [x] A key name that does not exist on the running platform logs the
       existing unknown-key warning and falls back, rather than raising
-- [ ] Windows key resolution is unchanged for every name it resolves today,
+- [x] Windows key resolution is unchanged for every name it resolves today,
       covered by a test that runs on all platforms
-- [ ] Full suite green on macOS (baseline: 246 passed, 4 skipped)
+- [x] Full suite green on macOS (254 passed, 4 skipped — baseline 246 + 8 new)

@@ -17,28 +17,50 @@ import logging
 log = logging.getLogger("dictate.hotkeys")
 
 
+# Config name -> the attribute on pynput's Key enum it means. Several names
+# are aliases for one key (rctrl/ctrl_r, win/cmd). Which of these actually
+# EXIST is platform-specific: macOS has no pause, scroll_lock, menu, insert
+# or alt_gr, so the table has to be built from what the enum really defines.
+_KEY_ALIASES = {
+    "ctrl_r": "ctrl_r", "rctrl": "ctrl_r",
+    "ctrl_l": "ctrl_l", "lctrl": "ctrl_l",
+    "ctrl": "ctrl",
+    "alt_r": "alt_r", "alt_gr": "alt_gr", "altgr": "alt_gr",
+    "alt_l": "alt_l", "alt": "alt",
+    "shift_r": "shift_r", "shift": "shift",
+    "cmd": "cmd", "win": "cmd", "cmd_r": "cmd_r", "rcmd": "cmd_r",
+    "pause": "pause", "scroll_lock": "scroll_lock",
+    "caps_lock": "caps_lock", "menu": "menu",
+    "space": "space", "esc": "esc",
+    "tab": "tab", "insert": "insert",
+}
+for _i in range(1, 21):
+    _KEY_ALIASES[f"f{_i}"] = f"f{_i}"
+
+
+def available_keys(key_enum) -> dict:
+    """Config name -> key object, for the keys this platform actually has.
+
+    Names the running enum doesn't define are simply absent from the table,
+    so callers get the ordinary unknown-key fallback instead of an
+    AttributeError at import time.
+    """
+    table = {}
+    for name, attr in _KEY_ALIASES.items():
+        key = getattr(key_enum, attr, None)
+        if key is not None:
+            table[name] = key
+    return table
+
+
 def parse_key(name: str):
     """Config string -> pynput key object. Accepts single chars, <ctrl> style,
-    and friendly names like ctrl_r / alt_gr / f9 / pause / space."""
+    and friendly names like ctrl_r / alt_r / f9 / space. A name this platform
+    has no key for falls back with a warning, same as an unknown name."""
     from pynput import keyboard
 
     n = name.strip().lower().strip("<>")
-    special = {
-        "ctrl_r": keyboard.Key.ctrl_r, "rctrl": keyboard.Key.ctrl_r,
-        "ctrl_l": keyboard.Key.ctrl_l, "lctrl": keyboard.Key.ctrl_l,
-        "ctrl": keyboard.Key.ctrl,
-        "alt_r": keyboard.Key.alt_r, "alt_gr": keyboard.Key.alt_gr,
-        "altgr": keyboard.Key.alt_gr, "alt_l": keyboard.Key.alt_l,
-        "alt": keyboard.Key.alt,
-        "shift_r": keyboard.Key.shift_r, "shift": keyboard.Key.shift,
-        "cmd": keyboard.Key.cmd, "win": keyboard.Key.cmd,
-        "pause": keyboard.Key.pause, "scroll_lock": keyboard.Key.scroll_lock,
-        "caps_lock": keyboard.Key.caps_lock, "menu": keyboard.Key.menu,
-        "space": keyboard.Key.space, "esc": keyboard.Key.esc,
-        "tab": keyboard.Key.tab, "insert": keyboard.Key.insert,
-    }
-    for i in range(1, 13):
-        special[f"f{i}"] = getattr(keyboard.Key, f"f{i}")
+    special = available_keys(keyboard.Key)
     if n in special:
         return special[n]
     if len(n) == 1:
