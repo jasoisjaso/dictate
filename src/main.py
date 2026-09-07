@@ -84,6 +84,12 @@ def main():
         log.error("no system tray available")
         sys.exit(1)
 
+    # After QApplication (the dialog needs it) and before the tray comes up:
+    # without the Accessibility grant macOS drops both the Trigger and
+    # Injection silently, so a Dictate that looks alive does nothing at all.
+    from . import permissions
+    permissions.run_preflight()
+
     from .ui import DictationTrayApp
     tray_app = DictationTrayApp(cfg, app, first_run=first_run,
                                 recovery_note=recovery.get("note"))  # noqa: F841

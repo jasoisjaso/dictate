@@ -10,7 +10,7 @@ primitives as win32_input, same contract:
 
 Everything here needs Accessibility Permission. Without the grant macOS
 drops posted events silently — no exception, no error — which is why the
-app preflights AXIsProcessTrusted() at startup (ticket 05) rather than
+app preflights the grant at startup (src/permissions.py) rather than
 discovering it here.
 
 Typing goes through CGEventKeyboardSetUnicodeString rather than keycodes,
@@ -206,15 +206,4 @@ def select_all() -> bool:
         return True
     except Exception:
         log.exception("mac select-all failed")
-        return False
-
-
-def accessibility_trusted() -> bool:
-    """Whether this process may post and observe keyboard events. Injection
-    silently does nothing when this is False."""
-    try:
-        import Quartz
-        return bool(Quartz.AXIsProcessTrusted())
-    except Exception:
-        log.debug("AXIsProcessTrusted unavailable", exc_info=True)
         return False
