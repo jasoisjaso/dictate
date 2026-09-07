@@ -25,15 +25,43 @@ def is_portable() -> bool:
     return os.path.exists(os.path.join(install_root(), PORTABLE_MARKER))
 
 
+def resolve_app_data_dir(system: str, env, home: str, install_root: str,
+                         portable: bool) -> str:
+    """Where user data belongs, as a pure decision. Creates nothing.
+
+    Everything the answer depends on is an argument, so every platform's
+    directory is testable from every platform.
+
+    Portable wins over all of it: a portable install writes nothing to the
+    host machine, whichever OS it is plugged into.
+
+    macOS gets ~/Library/Application Support/<app> rather than the Linux XDG
+    branch it used to fall through to. It matters because of the size — a
+    user, an uninstaller, or Migration Assistant has to be able to find
+    several hundred megabytes of Models, and no Mac tool looks in
+    ~/.local/share. XDG_DATA_HOME is deliberately ignored there: a stray
+    shell profile that exports it must not hide the Models.
+    """
+    if portable:
+        return os.path.join(install_root, "Data")
+    if system == "Windows":
+        return os.path.join(env.get("LOCALAPPDATA") or home, APP_NAME)
+    if system == "Darwin":
+        return os.path.join(home, "Library", "Application Support", APP_NAME)
+    # Linux / WSL / dev
+    base = env.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
+    return os.path.join(base, APP_NAME)
+
+
 def app_data_dir() -> str:
-    if is_portable():
-        d = os.path.join(install_root(), "Data")
-    elif platform.system() == "Windows":
-        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        d = os.path.join(base, APP_NAME)
-    else:  # WSL/dev
-        base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
-        d = os.path.join(base, APP_NAME)
+    """The resolved directory for this machine, created if it is missing."""
+    d = resolve_app_data_dir(
+        system=platform.system(),
+        env=os.environ,
+        home=os.path.expanduser("~"),
+        install_root=install_root(),
+        portable=is_portable(),
+    )
     os.makedirs(d, exist_ok=True)
     return d
 
