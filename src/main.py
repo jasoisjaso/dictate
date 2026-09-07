@@ -84,6 +84,13 @@ def main():
         log.error("no system tray available")
         sys.exit(1)
 
+    # Menu-bar-only, applied from source so a dev run behaves exactly like the
+    # bundle later (the bundle's LSUIElement says the same thing). Must be
+    # after QApplication — NSApp is the object Qt creates — and before the
+    # tray shows, so no Dock icon ever appears, even briefly.
+    from . import mac_shell
+    mac_shell.apply_menu_bar_only()
+
     # After QApplication (the dialog needs it) and before the tray comes up:
     # without the Accessibility grant macOS drops both the Trigger and
     # Injection silently, so a Dictate that looks alive does nothing at all.

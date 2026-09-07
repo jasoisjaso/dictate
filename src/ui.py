@@ -557,4 +557,10 @@ class DictationTrayApp(QObject, SessionMixin):
         self.recorder.close()
         self.overlay.hide_overlay()
         self.tray.hide()
+        # Menu-bar-only means this menu item is the only way out, so a process
+        # the event loop fails to unwind is unkillable except from Activity
+        # Monitor. The watchdog is a no-op on the normal path.
+        from . import mac_shell
+        if mac_shell.wants_menu_bar_only():
+            mac_shell.arm_exit_watchdog()
         self.app.quit()
