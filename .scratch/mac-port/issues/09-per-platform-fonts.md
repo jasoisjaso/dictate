@@ -9,11 +9,11 @@ its fixed pixel widths.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The overlay and guide use fonts confirmed present on the running
+- [x] The overlay and guide use fonts confirmed present on the running
       platform
-- [ ] Overlay text fits its fixed widths on macOS without clipping or
+- [x] Overlay text fits its fixed widths on macOS without clipping or
       overflow, checked against the rendered preview
-- [ ] Windows rendering is unchanged
-- [ ] Full suite green on macOS
+- [x] Windows rendering is unchanged
+- [x] Full suite green on macOS

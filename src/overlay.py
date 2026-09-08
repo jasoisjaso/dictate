@@ -97,10 +97,17 @@ class WaveformOverlay(QWidget):
         self._profile_tag = ""
         self._toast_text = ""
         self._toast_until = 0.0
-        self._font = QFont("Segoe UI", 10)
-        self._preview_font = QFont("Segoe UI", 13, QFont.DemiBold)
-        self._tag_font = QFont("Segoe UI", 7, QFont.Medium)
-        self._toast_font = QFont("Segoe UI", 10, QFont.Medium)
+        # Named families, not literals: "Segoe UI" is not installed on macOS
+        # and Qt substitutes silently, at metrics these fixed pixel widths
+        # were never measured against (ticket 09).
+        try:
+            from . import fonts
+        except ImportError:
+            import fonts
+        self._font = fonts.ui_font(10)
+        self._preview_font = fonts.ui_font(13, QFont.DemiBold)
+        self._tag_font = fonts.ui_font(7, QFont.Medium)
+        self._toast_font = fonts.ui_font(10, QFont.Medium)
 
         # equalizer sizing
         self._eq_base_h = EQ_BAR_MAX + EQ_PAD_Y * 2

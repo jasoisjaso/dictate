@@ -15,6 +15,15 @@ from PySide6.QtGui import (QColor, QFont, QPainter, QPixmap, QLinearGradient,
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QPushButton,
                                QVBoxLayout, QWidget)
 
+# Families the running platform actually has (ticket 09). The key-caps and
+# command examples below are drawn in the MONO face; on macOS "Consolas" is
+# absent and Qt substitutes the proportional system font, so the columns stop
+# lining up — a silent substitution, never an error.
+try:
+    from . import fonts
+except ImportError:
+    import fonts
+
 # palette (matches the overlay pill)
 BG = "#0f1116"
 CARD = "#171a20"
@@ -84,29 +93,29 @@ class _Illustration(QWidget):
             p.drawRoundedRect(QRectF(cx - 4, cy - 12, 8, 15, ), 4, 4)
             p.drawRect(QRectF(cx - 1, cy + 3, 2, 6))
             p.setPen(QColor(TEXT))
-            p.setFont(QFont("Segoe UI", 9))
+            p.setFont(fonts.ui_font(9))
             p.drawText(QRectF(cx - gap / 2, cy + 26, gap, 20),
                        Qt.AlignCenter, lab)
         self._caption(p, w, h, "Tray icon colour tells you the state at a glance")
 
     # ---- voice command before/after -----------------------------------
     def _draw_command(self, p, w, h):
-        p.setFont(QFont("Consolas", 11))
+        p.setFont(fonts.mono_font(11))
         # before
         p.setPen(QColor(TEXT))
         p.drawText(QRectF(24, 34, w - 48, 24), Qt.AlignLeft,
                    "the quick brown fox")
         p.setPen(QColor(MUTED))
-        p.setFont(QFont("Segoe UI", 9, italic=True))
+        p.setFont(fonts.ui_font(9, italic=True))
         p.drawText(QRectF(24, 66, w - 48, 20), Qt.AlignLeft,
                    'you say:  "delete last two words"')
         # arrow
         p.setPen(QColor(ACCENT))
-        p.setFont(QFont("Segoe UI", 14))
+        p.setFont(fonts.ui_font(14))
         p.drawText(QRectF(24, 92, w - 48, 24), Qt.AlignLeft, "↓")
         # after
         p.setPen(QColor(GREEN))
-        p.setFont(QFont("Consolas", 11))
+        p.setFont(fonts.mono_font(11))
         p.drawText(QRectF(24, 118, w - 48, 24), Qt.AlignLeft, "the quick")
         self._caption(p, w, h, "Fix mistakes by voice — no keyboard needed")
 
@@ -126,11 +135,11 @@ class _Illustration(QWidget):
             p.setPen(Qt.NoPen)
             p.drawRoundedRect(QRectF(34, y + 5, 56, 20), 10, 10)
             p.setPen(QColor("#0f1116"))
-            p.setFont(QFont("Segoe UI", 8, QFont.DemiBold))
+            p.setFont(fonts.ui_font(8, QFont.DemiBold))
             p.drawText(QRectF(34, y + 5, 56, 20), Qt.AlignCenter, name)
             # description
             p.setPen(QColor(TEXT))
-            p.setFont(QFont("Segoe UI", 9))
+            p.setFont(fonts.ui_font(9))
             p.drawText(QRectF(100, y, w - 120, 30),
                        Qt.AlignVCenter | Qt.AlignLeft, desc)
             y += 36
@@ -147,10 +156,10 @@ class _Illustration(QWidget):
             p.setPen(Qt.NoPen)
             p.drawRoundedRect(QRectF(24, y, w - 48, 34), 8, 8)
             p.setPen(QColor(TEXT))
-            p.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
+            p.setFont(fonts.ui_font(10, QFont.DemiBold))
             p.drawText(QRectF(38, y, 160, 34), Qt.AlignVCenter | Qt.AlignLeft, app)
             # tag
-            p.setFont(QFont("Segoe UI", 8))
+            p.setFont(fonts.ui_font(8))
             fm = QFontMetrics(p.font())
             tw = fm.horizontalAdvance(mode) + 16
             p.setBrush(QColor(col))
@@ -165,23 +174,23 @@ class _Illustration(QWidget):
     def _draw_dictionary(self, p, w, h):
         pairs = [('"woolies"', "Woolworths"), ('"hello acrylic"', "Hello Acrylic")]
         y = 44
-        p.setFont(QFont("Segoe UI", 11))
+        p.setFont(fonts.ui_font(11))
         for said, typed in pairs:
             p.setPen(QColor(MUTED))
             p.drawText(QRectF(24, y, 180, 26), Qt.AlignLeft | Qt.AlignVCenter, said)
             p.setPen(QColor(ACCENT))
             p.drawText(QRectF(180, y, 40, 26), Qt.AlignCenter, "→")
             p.setPen(QColor(GREEN))
-            p.setFont(QFont("Segoe UI", 11, QFont.DemiBold))
+            p.setFont(fonts.ui_font(11, QFont.DemiBold))
             p.drawText(QRectF(224, y, w - 240, 26),
                        Qt.AlignLeft | Qt.AlignVCenter, typed)
-            p.setFont(QFont("Segoe UI", 11))
+            p.setFont(fonts.ui_font(11))
             y += 40
         self._caption(p, w, h, "Teach it names & jargon in Settings → My words")
 
     def _caption(self, p, w, h, text):
         p.setPen(QColor(MUTED))
-        p.setFont(QFont("Segoe UI", 8))
+        p.setFont(fonts.ui_font(8))
         p.drawText(QRectF(12, h - 26, w - 24, 20), Qt.AlignCenter, text)
 
 
@@ -208,12 +217,12 @@ class GuideDialog(QDialog):
         root.addWidget(self.illus)
 
         self.title = QLabel()
-        self.title.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        self.title.setFont(fonts.ui_font(15, QFont.Bold))
         root.addWidget(self.title)
 
         self.body = QLabel()
         self.body.setWordWrap(True)
-        self.body.setFont(QFont("Segoe UI", 10))
+        self.body.setFont(fonts.ui_font(10))
         self.body.setStyleSheet(f"color:{TEXT};")
         self.body.setMinimumHeight(96)
         self.body.setAlignment(Qt.AlignTop)
@@ -224,7 +233,7 @@ class GuideDialog(QDialog):
         # dots + nav
         nav = QHBoxLayout()
         self.dots = QLabel()
-        self.dots.setFont(QFont("Segoe UI", 14))
+        self.dots.setFont(fonts.ui_font(14))
         nav.addWidget(self.dots)
         nav.addStretch(1)
         self.btn_back = QPushButton("Back")

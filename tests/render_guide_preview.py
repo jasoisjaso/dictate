@@ -37,7 +37,9 @@ ov._mode = "recording"
 ov._preview_on = False
 ov.set_profile_tag("terminal · verbatim")
 ov._apply_size()
-ov.resize(ov.W, ov.H)
+# _apply_size() already sets the widget's own geometry; ov.W/ov.H were an
+# older overlay's class constants and have not existed for some time.
+ov.resize(ov.width(), ov.height())
 ov.repaint()
 p = os.path.join(outdir, "overlay_profile_tag.png")
 ov.grab().save(p); print("wrote", p)
@@ -48,7 +50,7 @@ ov._toast_text = "12 words · Ctrl+Z to undo"
 import time
 ov._toast_until = time.monotonic() + 2
 ov._apply_size()
-ov.resize(ov.W, ov.H)
+ov.resize(ov.width(), ov.height())
 ov.repaint()
 p = os.path.join(outdir, "overlay_toast.png")
 ov.grab().save(p); print("wrote", p)
