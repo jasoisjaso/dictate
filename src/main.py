@@ -91,6 +91,12 @@ def main():
     from . import mac_shell
     mac_shell.apply_menu_bar_only()
 
+    # Before any hotkey listener starts: macOS switches an event tap off on a
+    # slow callback or heavy input, and pynput never turns it back on, so a
+    # push-to-talk RELEASE can be dropped and the Take runs forever.
+    from . import mac_tap
+    mac_tap.install()
+
     # After QApplication (the dialog needs it) and before the tray comes up:
     # without the Accessibility grant macOS drops both the Trigger and
     # Injection silently, so a Dictate that looks alive does nothing at all.

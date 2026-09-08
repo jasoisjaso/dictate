@@ -14,6 +14,8 @@ re-record callbacks are called directly (same wiring as before the split).
 
 import logging
 import platform
+import threading
+import time
 
 log = logging.getLogger("dictate.hotkeys")
 
@@ -172,12 +174,19 @@ class HotkeyController:
     pause, rerecord. All optional-safe: missing keys simply never fire.
     """
 
+    # How often the hardware poll asks macOS whether the talk key is still
+    # held. Fast enough that a missed release costs a fraction of a second,
+    # slow enough to be free: CGEventSourceKeyState is a cheap syscall.
+    STUCK_POLL_SECONDS = 0.15
+
     def __init__(self, mode: str, key_names: dict, callbacks: dict):
         self.mode = mode
         self.names = dict(key_names)
         self.cb = dict(callbacks)
         self._ptt_down = False
+        self._ptt_since = 0.0
         self._listener = None
+        self._stuck_stop = None
 
     def start(self):
         from pynput import keyboard
@@ -200,6 +209,7 @@ class HotkeyController:
                  self.names["mode_cycle"], self.names["pause"])
 
     def stop(self):
+        self._stop_stuck_poll()
         try:
             self._listener.stop()
         except Exception:
@@ -209,7 +219,58 @@ class HotkeyController:
     def reset_ptt(self):
         """Forget a held push-to-talk key (used by abort so a stuck 'down'
         flag can't swallow the next press)."""
+        self._stop_stuck_poll()
         self._ptt_down = False
+
+    # ---- the missed-release guard ------------------------------------------
+    # A Take ends on the push-to-talk RELEASE, so a release that never arrives
+    # does not merely lose a hotkey: it strands the app in RECORDING with no
+    # way out but Quit. That happened on the first mac build. Rather than
+    # trust the event stream to deliver every release, a held key is checked
+    # against the hardware — see src/mac_tap.release_was_missed — and the stop
+    # is fired from here if the two disagree. Off macOS the poll answers
+    # "don't know" for every key and the thread simply never fires, so Windows
+    # behaviour is unchanged.
+
+    def _start_stuck_poll(self):
+        stop = threading.Event()
+        self._stuck_stop = stop
+        threading.Thread(target=self._stuck_poll, args=(stop,),
+                         daemon=True).start()
+
+    def _stop_stuck_poll(self):
+        if self._stuck_stop is not None:
+            self._stuck_stop.set()
+            self._stuck_stop = None
+
+    def _stuck_poll(self, stop):
+        try:
+            from . import mac_tap
+        except ImportError:
+            import mac_tap
+        while not stop.wait(self.STUCK_POLL_SECONDS):
+            if not self._ptt_down:
+                return
+            try:
+                missed = mac_tap.release_was_missed(
+                    self.names["ptt"], self._ptt_since, time.monotonic())
+            except Exception:
+                log.debug("stuck-key poll failed", exc_info=True)
+                return
+            if not missed:
+                continue
+            # The key is physically up and no release event ever came. End
+            # the Take exactly as a real release would, so the user gets
+            # their words instead of a recording that runs forever.
+            log.warning("push-to-talk release was never delivered — ending "
+                        "the take from the hardware key state")
+            self._ptt_down = False
+            self._stuck_stop = None
+            try:
+                self.cb["ptt_stop"]()
+            except Exception:
+                log.exception("ptt_stop from the stuck-key poll failed")
+            return
 
     @staticmethod
     def _key_matches(key, target) -> bool:
@@ -228,6 +289,8 @@ class HotkeyController:
             if self.mode == "push_to_talk" and self._key_matches(key, self._ptt_key):
                 if not self._ptt_down:          # ignore auto-repeat
                     self._ptt_down = True
+                    self._ptt_since = time.monotonic()
+                    self._start_stuck_poll()
                     self.cb["ptt_start"]()
                 return
             if self._key_matches(key, self._abort_key):
@@ -255,6 +318,7 @@ class HotkeyController:
         try:
             if self.mode == "push_to_talk" and self._key_matches(key, self._ptt_key):
                 if self._ptt_down:
+                    self._stop_stuck_poll()
                     self._ptt_down = False
                     self.cb["ptt_stop"]()
         except Exception:
