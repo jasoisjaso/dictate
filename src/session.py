@@ -68,18 +68,21 @@ class SessionMixin:
         # "code" forces verbatim (like a terminal profile).
         # "prose" forces cleanup + sentence casing (the default behaviour).
         # "email" forces professional tone.
+        # foreground_app, not foreground_exe: the Foreground App is named by
+        # executable on Windows and by bundle identifier on macOS, and one
+        # `match` list holds both kinds (ticket 10).
         if self._dict_mode == "auto":
-            self._rec_app = appcontext.foreground_exe()
+            self._rec_app = appcontext.foreground_app()
             self._rec_profile = appcontext.resolve_profile(self._rec_app,
                                                            self.app_profiles)
         elif self._dict_mode == "code":
-            self._rec_app = appcontext.foreground_exe()
+            self._rec_app = appcontext.foreground_app()
             self._rec_profile = {"verbatim": True, "_profile": "code"}
         elif self._dict_mode == "email":
-            self._rec_app = appcontext.foreground_exe()
+            self._rec_app = appcontext.foreground_app()
             self._rec_profile = {"tone": "professional", "_profile": "email"}
         else:  # prose
-            self._rec_app = appcontext.foreground_exe()
+            self._rec_app = appcontext.foreground_app()
             self._rec_profile = {"_profile": "prose"}
         # force_paste is a delivery quirk of the target app (e.g. modern
         # Notepad dropping typed keys), independent of the formatting mode.

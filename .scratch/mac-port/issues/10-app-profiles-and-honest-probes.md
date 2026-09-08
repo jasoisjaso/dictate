@@ -18,13 +18,13 @@ truthful to show instead of an unexplained "cpu".
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Dictating into Terminal on macOS selects the terminal App Profile
-- [ ] Profile matching is covered by tests over both identifier kinds
-- [ ] Shipped default profiles match common mac terminals and editors as
+- [x] Dictating into Terminal on macOS selects the terminal App Profile
+- [x] Profile matching is covered by tests over both identifier kinds
+- [x] Shipped default profiles match common mac terminals and editors as
       well as their Windows counterparts
-- [ ] Tier detection performs no Windows-only or NVIDIA-only probe on macOS
-- [ ] The tray and log state the CPU Tier with its reason
-- [ ] Windows detection and profile matching are unchanged
-- [ ] Full suite green on macOS
+- [x] Tier detection performs no Windows-only or NVIDIA-only probe on macOS
+- [x] The tray and log state the CPU Tier with its reason
+- [x] Windows detection and profile matching are unchanged
+- [x] Full suite green on macOS

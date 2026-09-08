@@ -103,10 +103,15 @@ class TrayShell:
                  RECORDING: app.tr("listening"),
                  TRANSCRIBING: app.tr("transcribing")}[state]
         dev = f" on {app.engine.active_device}" if app.engine.active_device else ""
-        # AMD GPU note — cached at init so we don't spawn wmic on every state change
+        # Why that device — resolved once at startup, so no probe runs on a
+        # state change. On a Mac a bare "cpu" reads like a failure rather than
+        # the correct answer for the hardware (ticket 10). The AMD note is the
+        # Windows special case and stays ahead of the generic reason.
         amd_note = ""
         if getattr(app, "_amd_note", "") and app.engine.active_device == "cpu":
             amd_note = app._amd_note
+        elif getattr(app, "_tier_reason", "") and app.engine.active_device == "cpu":
+            amd_note = f" ({app._tier_reason})"
         # Engine name in tooltip + status row so a screenshot in a bug
         # report identifies the engine for free (Whisper vs Parakeet).
         eng = getattr(app.engine, "engine_name", "whisper").title()

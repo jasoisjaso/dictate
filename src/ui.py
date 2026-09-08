@@ -80,14 +80,20 @@ class DictationTrayApp(QObject, SessionMixin):
         self._session_start = time.time()
         self._dict_mode = "auto"  # cycle via F7: auto -> prose -> code -> email
         self._monitor_stop = threading.Event()
-        # Cache AMD GPU detection once at startup so we never spawn wmic again
+        # Why this machine got the Tier it got, resolved once at startup so no
+        # probe runs on a state change. On macOS this is what stops the tray
+        # showing a bare unexplained "cpu" (ticket 10); off Windows the AMD
+        # probe now returns before shelling out at all.
+        self._tier_reason = ""
         self._amd_note = ""
         try:
             from . import device as _device
-            if hasattr(_device, '_amd_gpu_present') and _device._amd_gpu_present():
+            _tier = _device.detect()
+            self._tier_reason = _device.tier_reason(_tier)
+            if _tier.amd_gpu:
                 self._amd_note = " (AMD GPU — CPU mode)"
         except Exception:
-            pass
+            log.debug("tier reason unavailable", exc_info=True)
 
         vad = cfg.get("vad", {})
         self.silence_timeout = float(vad.get("silence_timeout", 2.0))

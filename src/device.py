@@ -4,15 +4,25 @@ choose_tier() is pure (testable). detect() probes the real machine and
 delegates to choose_tier(). VRAM is read via nvidia-smi (no extra deps);
 CUDA availability via ctranslate2 when present. AMD GPUs are detected via
 WMIC so we can show an honest message instead of silently falling back.
+
+Which probes are worth running is a per-platform decision, not a coincidence:
+`nvidia-smi` and `wmic` cannot exist on an Apple Silicon Mac, so asking for
+them there produced the right Tier for the wrong reason (ticket 10). The
+`system` argument on each seam keeps every platform's answer testable from
+every platform.
 """
 from __future__ import annotations
 
 import logging
+import platform
 import shutil
 import subprocess
 from dataclasses import asdict, dataclass
 
 log = logging.getLogger("dictate.device")
+
+MACOS = "Darwin"
+WINDOWS = "Windows"
 
 
 @dataclass
@@ -86,8 +96,20 @@ def _cuda_available() -> bool:
         return False
 
 
-def _vram_gb() -> float:
-    exe = shutil.which("nvidia-smi")
+def wants_nvidia_probe(system: str | None = None) -> bool:
+    """No Mac carries an NVIDIA GPU that CUDA can reach. Linux and Windows can."""
+    return (system or platform.system()) != MACOS
+
+
+def wants_amd_probe(system: str | None = None) -> bool:
+    """`wmic` is a Windows binary. Nowhere else has it to run."""
+    return (system or platform.system()) == WINDOWS
+
+
+def _vram_gb(system: str | None = None, _which=None) -> float:
+    if not wants_nvidia_probe(system):
+        return 0.0
+    exe = (_which or shutil.which)("nvidia-smi")
     if not exe:
         return 0.0
     try:
@@ -101,9 +123,15 @@ def _vram_gb() -> float:
         return 0.0
 
 
-def _amd_gpu_present() -> bool:
-    """Check for AMD GPU via WMIC on Windows. Returns False on non-Windows."""
-    exe = shutil.which("wmic")
+def _amd_gpu_present(system: str | None = None, _which=None) -> bool:
+    """Check for AMD GPU via WMIC on Windows. Returns False on non-Windows.
+
+    Off Windows this now returns before touching the filesystem at all, so a
+    Mac never goes looking for a binary that cannot be there.
+    """
+    if not wants_amd_probe(system):
+        return False
+    exe = (_which or shutil.which)("wmic")
     if not exe:
         return False
     try:
@@ -117,6 +145,29 @@ def _amd_gpu_present() -> bool:
         return False
 
 
+def tier_reason(tier: Tier, system: str | None = None,
+                machine: str | None = None) -> str:
+    """One plain sentence saying WHY this Tier was chosen.
+
+    The tray used to show a bare "cpu", which on a Mac reads like a failure
+    rather than the correct answer for the hardware. Pure, so the sentence
+    every platform shows is testable from any platform.
+    """
+    system = system or platform.system()
+    machine = machine or platform.machine()
+    # No parentheses: the tray already wraps this sentence in a pair, and
+    # nested brackets read like a stack trace.
+    if tier.device == "cuda":
+        return f"NVIDIA GPU via CUDA, {tier.compute_type}"
+    if tier.amd_gpu:
+        return "AMD GPU — running on CPU, DirectML planned"
+    if system == MACOS:
+        if machine.lower() in ("arm64", "aarch64"):
+            return "Apple Silicon CPU — macOS has no CUDA"
+        return "Intel Mac CPU — macOS has no CUDA"
+    return "No CUDA GPU detected — CPU"
+
+
 def detect() -> Tier:
     cuda = _cuda_available()
     vram = _vram_gb() if cuda else 0.0
@@ -125,8 +176,8 @@ def detect() -> Tier:
     if amd:
         log.info("AMD GPU detected — using CPU (DirectML support planned)")
         tier.amd_gpu = True
-    log.info("auto device: cuda=%s vram=%.1fGB amd=%s -> %s",
-             cuda, vram, amd, tier.as_dict())
+    log.info("auto device: cuda=%s vram=%.1fGB amd=%s -> %s (%s)",
+             cuda, vram, amd, tier.as_dict(), tier_reason(tier))
     return tier
 
 

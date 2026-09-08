@@ -315,8 +315,11 @@ class SettingsDialog(QDialog):
             self._tier = tier
             hint = (f"Auto = {tier.model_size} on {tier.device}"
                     f" ({tier.compute_type})")
-            if getattr(tier, "amd_gpu", False):
-                hint += "\nAMD GPU — using CPU. DirectML planned."
+            # Say WHY, not just what: "cpu" alone reads like a failure on a
+            # Mac, where it is the correct answer for the hardware (ticket 10).
+            reason = _device.tier_reason(tier)
+            if reason:
+                hint += f"\n{reason}"
         except Exception:
             hint = ""
             self._tier = None

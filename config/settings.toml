@@ -157,6 +157,13 @@ language = "auto"                # auto | en | bs
 # email (professional tone). Add your own like this:
 #
 # [app_profiles.notes]
-# match = ["Obsidian.exe", "Notion.exe"]
+# match = ["Obsidian.exe", "md.obsidian", "Notion.exe", "notion.id"]
 # verbatim = false
 # tone = "casual"
+#
+# A `match` entry names the focused app the way its platform names it:
+#   Windows   the executable, e.g. "Code.exe"
+#   macOS     the bundle identifier, e.g. "com.microsoft.VSCode"
+# One list holds both kinds, so a profile you write stays portable. Matching
+# is case-insensitive and "*" wildcards work ("com.jetbrains.*"). To find a
+# Mac app's bundle id:  osascript -e 'id of app "Obsidian"'
