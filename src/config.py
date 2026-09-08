@@ -6,7 +6,6 @@ import logging
 import os
 import platform
 import re
-import sys
 try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:
@@ -19,13 +18,11 @@ except ImportError:
 
 
 def _default_toml_path() -> str:
-    # Frozen (Nuitka): config/ sits next to the executable.
-    # Dev: config/settings.toml relative to repo root (src/../config).
-    if getattr(sys, "frozen", False):
-        base = os.path.dirname(sys.executable)
-    else:
-        base = os.path.join(os.path.dirname(__file__), "..")
-    return os.path.join(base, "config", "settings.toml")
+    # One question, three answers, all of them in paths.resource_root():
+    # a dev run reads the repo, Nuitka reads beside the exe, and a
+    # PyInstaller .app reads Contents/Frameworks. Getting it wrong is silent
+    # — a missing file parses as {} and the app starts with no defaults.
+    return os.path.join(paths.resource_root(), "config", "settings.toml")
 
 
 def _read(path: str) -> dict:

@@ -47,6 +47,40 @@ def test_applying_on_macos_asks_for_the_accessory_policy():
     assert seen == [mac_shell.ACTIVATION_POLICY_ACCESSORY]
 
 
+def test_a_bundle_already_in_the_accessory_policy_counts_as_applied():
+    """The .app's LSUIElement puts the process in the accessory policy before
+    a line of Python runs, and AppKit answers a no-op change with False. The
+    startup call must not read that as a refusal: the bundle logged
+    "accessory activation policy refused" while having no Dock icon at all.
+    """
+    assert mac_shell.apply_menu_bar_only(
+        system="Darwin",
+        _set_policy=lambda _p: False,
+        _get_policy=lambda: mac_shell.ACTIVATION_POLICY_ACCESSORY) is True
+
+
+def test_a_refusal_that_leaves_a_regular_app_is_still_a_refusal():
+    """A source run has the regular policy until we change it. If that change
+    fails the Dock icon really does stay, and the log has to say so."""
+    assert mac_shell.apply_menu_bar_only(
+        system="Darwin",
+        _set_policy=lambda _p: False,
+        _get_policy=lambda: mac_shell.ACTIVATION_POLICY_REGULAR) is False
+
+
+def test_an_unreadable_policy_falls_back_to_what_appkit_returned():
+    """No pyobjc, or a policy getter that raises: trust the setter's own
+    answer rather than inventing a success."""
+    def fail():
+        raise RuntimeError("pyobjc missing")
+
+    assert mac_shell.apply_menu_bar_only(
+        system="Darwin", _set_policy=lambda _p: True, _get_policy=fail) is True
+    assert mac_shell.apply_menu_bar_only(
+        system="Darwin", _set_policy=lambda _p: False,
+        _get_policy=fail) is False
+
+
 def test_applying_off_macos_touches_nothing():
     def explode(_policy):
         raise AssertionError("no activation policy on this platform")

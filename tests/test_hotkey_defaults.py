@@ -12,12 +12,27 @@ unbound" — the user can still set it in Settings.
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import hotkeys  # noqa: E402
 
 ALL_ACTIONS = {"push_to_talk_key", "toggle_key", "abort_key", "copy_key",
                "mode_cycle_key", "pause_key", "rerecord_key"}
+
+# The default *table* is a pure lookup and is checked on every runner. The
+# tests below that resolve a name into a real key need pynput, which imports
+# a per-platform backend — Xlib on Linux, which raises without a DISPLAY. A
+# headless runner skips those rather than failing for a reason that says
+# nothing about the defaults.
+try:
+    from pynput import keyboard as _keyboard
+except Exception:  # no pynput, or no display to bind a backend to
+    _keyboard = None
+
+needs_pynput = pytest.mark.skipif(
+    _keyboard is None, reason="pynput has no usable backend here (headless)")
 
 
 def test_windows_defaults_are_unchanged():
@@ -61,13 +76,14 @@ def test_both_platforms_answer_for_every_action():
         assert set(hotkeys.defaults_for(system)) == ALL_ACTIONS
 
 
+@needs_pynput
 def test_no_default_binds_a_key_absent_from_that_platform():
     """The point of the whole ticket: a shipped default must resolve to a real
     key on the platform it ships to. Checked against the running platform's
     own pynput enum, which is the only one we can ask honestly."""
     import platform
 
-    from pynput import keyboard
+    keyboard = _keyboard
 
     available = hotkeys.available_keys(keyboard.Key)
     for action, name in hotkeys.defaults_for(platform.system()).items():
@@ -76,6 +92,7 @@ def test_no_default_binds_a_key_absent_from_that_platform():
         assert name in available or len(name) == 1, (action, name)
 
 
+@needs_pynput
 def test_unbound_names_are_not_resolved_to_a_fallback_key():
     """An unbound default must stay unbound. Falling back to Right Ctrl here
     would silently bind an action to the push-to-talk key."""
@@ -83,6 +100,7 @@ def test_unbound_names_are_not_resolved_to_a_fallback_key():
     assert hotkeys.parse_key("   ") is None
 
 
+@needs_pynput
 def test_controller_skips_unbound_actions(monkeypatch):
     """An unbound action never fires, and never steals a key from another."""
     fired = []
@@ -124,7 +142,8 @@ def test_controller_skips_unbound_actions(monkeypatch):
     assert fired == ["ptt_start"]
 
 
+@needs_pynput
 def test_key_matches_never_matches_an_unbound_target():
-    from pynput import keyboard
+    keyboard = _keyboard
 
     assert hotkeys.HotkeyController._key_matches(keyboard.Key.alt_r, None) is False

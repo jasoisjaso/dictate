@@ -13,9 +13,24 @@ Windows CI where nothing is missing.
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import hotkeys  # noqa: E402
+
+# The stub-enum tests are the ones that matter for the degradation itself and
+# run anywhere. The tests below that ask the *real* enum need pynput, which
+# imports its Xlib backend on Linux and raises without a DISPLAY — so a
+# headless runner skips them rather than reporting a failure that says nothing
+# about this code.
+try:
+    from pynput import keyboard as _keyboard
+except Exception:  # no pynput, or no display to bind a backend to
+    _keyboard = None
+
+needs_pynput = pytest.mark.skipif(
+    _keyboard is None, reason="pynput has no usable backend here (headless)")
 
 
 class _StubKey:
@@ -58,17 +73,19 @@ def test_available_keys_never_raises_on_a_sparse_enum():
                                              "rctrl": "CTRL_R"}
 
 
+@needs_pynput
 def test_available_keys_on_the_real_platform_enum():
     """The real thing: on macOS this used to raise AttributeError."""
-    from pynput import keyboard
+    keyboard = _keyboard
 
     table = hotkeys.available_keys(keyboard.Key)
     assert table["ctrl_r"] is keyboard.Key.ctrl_r
     assert "esc" in table and "space" in table
 
 
+@needs_pynput
 def test_parse_key_resolves_common_names_on_any_platform():
-    from pynput import keyboard
+    keyboard = _keyboard
 
     assert hotkeys.parse_key("ctrl_r") is keyboard.Key.ctrl_r
     assert hotkeys.parse_key("alt_r") is keyboard.Key.alt_r
@@ -76,19 +93,22 @@ def test_parse_key_resolves_common_names_on_any_platform():
     assert hotkeys.parse_key("f8") is keyboard.Key.f8
 
 
+@needs_pynput
 def test_parse_key_single_char_still_becomes_a_keycode():
     assert hotkeys.parse_key("d").char == "d"
 
 
+@needs_pynput
 def test_parse_key_falls_back_for_an_unknown_name(caplog):
-    from pynput import keyboard
+    keyboard = _keyboard
 
     assert hotkeys.parse_key("nonexistent_key") is keyboard.Key.ctrl_r
 
 
+@needs_pynput
 def test_parse_key_falls_back_for_a_key_absent_on_this_platform():
     """'pause' exists on Windows, not on macOS. Either way: no exception."""
-    from pynput import keyboard
+    keyboard = _keyboard
 
     got = hotkeys.parse_key("pause")
     if hasattr(keyboard.Key, "pause"):
@@ -97,6 +117,7 @@ def test_parse_key_falls_back_for_a_key_absent_on_this_platform():
         assert got is keyboard.Key.ctrl_r
 
 
+@needs_pynput
 def test_every_shipped_default_key_name_resolves_without_raising():
     """Every key name config/settings.toml ships must be safe to parse."""
     for name in ("ctrl_r", "alt_r", "f9", "esc", "f8", "f7", "pause", "f6"):

@@ -16,6 +16,12 @@ dist/
 *.onefile-build/
 packaging/Output/
 
+# generated app icon for the mac bundle. The .ico IS committed because the
+# Windows release workflow reads it straight from the checkout; the .icns is
+# rendered by packaging/build_mac_app.sh on the machine doing the build, and
+# neither renderer is byte-reproducible — committing it would be pure churn.
+assets/dictate.icns
+
 # models & user data (never commit)
 models/
 *.onnx.cache

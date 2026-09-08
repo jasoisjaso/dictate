@@ -79,10 +79,16 @@ def test_the_probe_returns_a_bool_on_any_platform():
 def test_the_probe_agrees_with_the_system_on_macos():
     """AXIsProcessTrusted is a HIServices symbol (re-exported by
     ApplicationServices), not a Quartz one — asking Quartz for it raises."""
+    import pytest
+
     if not IS_MAC:
-        import pytest
         pytest.skip("macOS only")
-    import ApplicationServices
+    # pyobjc is not installed on the CI runner (the suite there is
+    # pure-python). Without it the probe's own fail-safe answer is False, and
+    # there is nothing to compare it against — skip rather than fail on an
+    # absent framework that says nothing about this code.
+    ApplicationServices = pytest.importorskip(
+        "ApplicationServices", reason="pyobjc not installed on this runner")
 
     assert permissions.accessibility_trusted() == bool(
         ApplicationServices.AXIsProcessTrusted())

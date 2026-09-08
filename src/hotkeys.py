@@ -13,6 +13,7 @@ re-record callbacks are called directly (same wiring as before the split).
 """
 
 import logging
+import platform
 
 log = logging.getLogger("dictate.hotkeys")
 
@@ -111,13 +112,57 @@ def parse_key(name: str):
     return keyboard.Key.ctrl_r
 
 
+# ---- how a key is NAMED to the user ----------------------------------------
+# One table, because a key name is shown in three places — the tray menu, the
+# "Hold X and talk" hint, and the Settings picker — and they have to agree.
+# They didn't: the tray said "Right Alt" and "F8" on the very Mac where
+# Settings said "Right Option" and "fn+F8", for the same two keys.
+
+_KEY_LABELS = {
+    "ctrl_r": "Right Ctrl", "ctrl_l": "Left Ctrl", "alt_r": "Right Alt",
+    "alt_gr": "Right Alt", "shift_r": "Right Shift", "pause": "Pause",
+    "menu": "Menu key", "caps_lock": "Caps Lock", "scroll_lock": "Scroll Lock",
+    "space": "Space", "esc": "Esc", "tab": "Tab", "insert": "Insert",
+}
+
+# Apple keyboards name the same keys differently, and macOS ships
+# com.apple.keyboard.fnState unset, so a bare F-key press is media/brightness —
+# the label has to say fn+F8 or the user presses the wrong thing (ADR 0003).
+_KEY_LABELS_MACOS = {
+    "alt_r": "Right Option", "alt_l": "Left Option", "alt": "Option",
+    "cmd": "Command", "cmd_r": "Right Command",
+    "ctrl_r": "Right Control", "ctrl_l": "Left Control", "ctrl": "Control",
+    "shift_r": "Right Shift", "caps_lock": "Caps Lock",
+    "space": "Space", "esc": "Esc", "tab": "Tab",
+}
+
+UNBOUND_LABEL = "Not set"
+
+
+def key_label(name: str, system: str | None = None) -> str:
+    """Human label for a key name, in the vocabulary of `system`'s keyboard.
+
+    An empty name is an action shipped deliberately unbound; it says so
+    rather than rendering as a blank button or a blank spot in the tray.
+    """
+    n = (name or "").strip().lower()
+    if not n:
+        return UNBOUND_LABEL
+    if system is None:
+        system = platform.system()
+    if str(system).strip().lower() == "darwin":
+        if n in _KEY_LABELS_MACOS:
+            return _KEY_LABELS_MACOS[n]
+        if len(n) > 1 and n[0] == "f" and n[1:].isdigit():
+            return f"fn+F{n[1:]}"
+    if n in _KEY_LABELS:
+        return _KEY_LABELS[n]
+    return n.upper() if len(n) <= 3 else n.title()
+
+
 def pretty_key(name: str) -> str:
-    return {
-        "ctrl_r": "Right Ctrl", "ctrl_l": "Left Ctrl", "alt_r": "Right Alt",
-        "alt_gr": "Right Alt", "pause": "Pause", "menu": "Menu key",
-        "caps_lock": "Caps Lock", "scroll_lock": "Scroll Lock",
-    }.get(name.strip().lower(), name.strip().upper() if len(name.strip()) == 1
-          else name.strip().title())
+    """The label for this machine. What the tray and the hint call."""
+    return key_label(name)
 
 
 class HotkeyController:

@@ -25,6 +25,39 @@ def is_portable() -> bool:
     return os.path.exists(os.path.join(install_root(), PORTABLE_MARKER))
 
 
+def resolve_resource_root(frozen: bool, executable: str, meipass: str | None,
+                          source_root: str) -> str:
+    """Where the packaged read-only files live, as a pure decision.
+
+    Three shapes, and they disagree:
+
+      * a dev run  — the repo root, two levels up from this file
+      * Nuitka     — beside the executable (what Windows ships today)
+      * PyInstaller — the bootloader's unpack directory, which for a `.app` is
+        `Contents/Frameworks` while the executable sits in `Contents/MacOS`
+
+    _MEIPASS is only trusted when the run is actually frozen: a stray variable
+    inherited from another process must never redirect a dev run at a stale
+    unpack directory.
+
+    This is NOT where user data goes — see resolve_app_data_dir. An `.app` is
+    signed and read-only; writing into it breaks the signature.
+    """
+    if frozen:
+        return meipass or os.path.dirname(os.path.abspath(executable))
+    return source_root
+
+
+def resource_root() -> str:
+    """The resolved read-only resource directory for this run."""
+    return resolve_resource_root(
+        frozen=bool(getattr(sys, "frozen", False)),
+        executable=sys.executable,
+        meipass=getattr(sys, "_MEIPASS", None),
+        source_root=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    )
+
+
 def resolve_app_data_dir(system: str, env, home: str, install_root: str,
                          portable: bool) -> str:
     """Where user data belongs, as a pure decision. Creates nothing.

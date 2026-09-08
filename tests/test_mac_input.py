@@ -24,7 +24,23 @@ if ROOT not in sys.path:
 from src import input_backend  # noqa: E402
 
 IS_MAC = platform.system() == "Darwin"
-macos_only = pytest.mark.skipif(not IS_MAC, reason="macOS Input Backend")
+
+# Posting a real event needs pyobjc, and observing it come back needs pynput.
+# Neither is installed by the CI runner — the suite there is pure-python — so
+# a runner skips these rather than failing on a missing import that says
+# nothing about the backend. On a developer Mac with the app's own venv they
+# all run for real.
+try:
+    import Quartz  # noqa: F401
+    from pynput import keyboard as _keyboard  # noqa: F401
+
+    _HAS_NATIVE = True
+except Exception:
+    _HAS_NATIVE = False
+
+macos_only = pytest.mark.skipif(
+    not (IS_MAC and _HAS_NATIVE),
+    reason="macOS Input Backend (needs pyobjc + pynput on a real Mac)")
 
 
 # ---- backend resolution ----------------------------------------------------

@@ -51,46 +51,20 @@ LANG_CHOICES = [
     ("zh", "Chinese"),
 ]
 
-_KEY_LABELS = {
-    "ctrl_r": "Right Ctrl", "ctrl_l": "Left Ctrl", "alt_r": "Right Alt",
-    "alt_gr": "Right Alt", "shift_r": "Right Shift", "pause": "Pause",
-    "menu": "Menu key", "caps_lock": "Caps Lock", "scroll_lock": "Scroll Lock",
-    "space": "Space", "esc": "Esc", "tab": "Tab", "insert": "Insert",
-}
+# The key-label tables used to live here as a second copy, and the two copies
+# disagreed: this one knew "Right Option" and "fn+F8", the tray's did not, so
+# the same key had two names on the same screen. One table now, in hotkeys.
+try:
+    from . import hotkeys as _hotkeys_mod
+except ImportError:
+    import hotkeys as _hotkeys_mod
 
-# Apple keyboards name the same keys differently, and macOS ships
-# com.apple.keyboard.fnState unset, so a bare F-key press is media/brightness —
-# the label has to say fn+F8 or the user presses the wrong thing (ADR 0003).
-_KEY_LABELS_MACOS = {
-    "alt_r": "Right Option", "alt_l": "Left Option", "alt": "Option",
-    "cmd": "Command", "cmd_r": "Right Command",
-    "ctrl_r": "Right Control", "ctrl_l": "Left Control", "ctrl": "Control",
-    "shift_r": "Right Shift", "caps_lock": "Caps Lock",
-    "space": "Space", "esc": "Esc", "tab": "Tab",
-}
-
-UNBOUND_LABEL = "Not set"
+UNBOUND_LABEL = _hotkeys_mod.UNBOUND_LABEL
 
 
 def key_label(name: str, system: str | None = None) -> str:
-    """Human label for a key name, in the vocabulary of `system`'s keyboard.
-
-    An empty name is an action shipped deliberately unbound; it says so
-    rather than rendering as a blank button.
-    """
-    n = (name or "").strip().lower()
-    if not n:
-        return UNBOUND_LABEL
-    if system is None:
-        system = platform.system()
-    if str(system).strip().lower() == "darwin":
-        if n in _KEY_LABELS_MACOS:
-            return _KEY_LABELS_MACOS[n]
-        if len(n) > 1 and n[0] == "f" and n[1:].isdigit():
-            return f"fn+F{n[1:]}"
-    if n in _KEY_LABELS:
-        return _KEY_LABELS[n]
-    return n.upper() if len(n) <= 3 else n.title()
+    """Human label for a key name, in the vocabulary of `system`'s keyboard."""
+    return _hotkeys_mod.key_label(name, system)
 
 
 def default_key(action: str, system: str | None = None) -> str:

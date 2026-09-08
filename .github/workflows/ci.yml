@@ -12,8 +12,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.10", "3.12"]
+        exclude:
+          # macos-latest is Apple Silicon, and 3.10 has no arm64 runner image
+          # on it. 3.12 is what the mac port actually ships on (PySide6 and
+          # sherpa-onnx have no 3.14 wheels), so that is the one that matters.
+          - os: macos-latest
+            python-version: "3.10"
     steps:
       - uses: actions/checkout@v4
 

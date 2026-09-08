@@ -30,10 +30,11 @@ log = logging.getLogger("dictate.mac_shell")
 
 MACOS = "Darwin"
 
-# NSApplicationActivationPolicyAccessory. The app runs, shows a menu bar
-# extra, and is never in the Dock or Cmd+Tab. Hard-coded rather than read
-# from AppKit so the value is testable with no pyobjc present.
-ACTIVATION_POLICY_ACCESSORY = 1
+# NSApplicationActivationPolicy values. Hard-coded rather than read from
+# AppKit so they are testable with no pyobjc present.
+ACTIVATION_POLICY_REGULAR = 0    # Dock icon, Cmd+Tab entry — what a plain
+                                 # source run starts as
+ACTIVATION_POLICY_ACCESSORY = 1  # menu bar extra only
 
 # How long the normal shutdown gets before the watchdog stops being polite.
 # Long enough for the event loop to unwind and daemon threads to be dropped,
@@ -53,15 +54,29 @@ def _set_activation_policy(policy: int) -> bool:
     return bool(AppKit.NSApp.setActivationPolicy_(policy))
 
 
-def apply_menu_bar_only(system: str | None = None, _set_policy=None) -> bool:
-    """Hide from the Dock and Cmd+Tab. True if the policy was accepted.
+def _get_activation_policy() -> int:
+    import AppKit
+
+    return int(AppKit.NSApp.activationPolicy())
+
+
+def apply_menu_bar_only(system: str | None = None, _set_policy=None,
+                        _get_policy=None) -> bool:
+    """Hide from the Dock and Cmd+Tab. True if the app ends up an accessory.
 
     Must run after QApplication exists — NSApp is the shared application
     object Qt creates — and before the tray is shown, so the icon never
     appears in the Dock even briefly.
 
-    Failure is reported, never raised: AppKit returns False if the app is
-    not in a state to change policy, and a Dock icon that stays put is a
+    The setter's return value alone is not the answer. The shipped bundle
+    declares `LSUIElement`, so the process is *already* an accessory before
+    any Python runs, and AppKit answers that no-op change with False. Reading
+    it as a refusal made the bundle log "the Dock icon will stay" while
+    having no Dock icon at all. So a False is checked against the policy the
+    app actually has: what matters is the end state, not whether this call
+    was the thing that produced it.
+
+    Failure is reported, never raised: a Dock icon that stays put is a
     cosmetic problem where a traceback at startup is a dead app.
     """
     if not wants_menu_bar_only(system):
@@ -74,11 +89,21 @@ def apply_menu_bar_only(system: str | None = None, _set_policy=None) -> bool:
                     exc_info=True)
         return False
     if not ok:
+        try:
+            current = (_get_policy or _get_activation_policy)()
+        except Exception:
+            # No pyobjc, or the getter moved: trust the setter's own answer
+            # rather than inventing a success.
+            log.debug("could not read the activation policy", exc_info=True)
+            current = None
+        if current == ACTIVATION_POLICY_ACCESSORY:
+            log.info("menu-bar-only: already an accessory app (LSUIElement)")
+            return True
         log.warning("accessory activation policy refused — the Dock icon "
                     "will stay")
-    else:
-        log.info("menu-bar-only: accessory activation policy applied")
-    return ok
+        return False
+    log.info("menu-bar-only: accessory activation policy applied")
+    return True
 
 
 def _qt_schedule(delay_ms: int, fn):
