@@ -194,17 +194,40 @@ def test_a_key_still_held_does_not_end_the_take():
 
 
 def test_a_key_no_longer_held_ends_the_take():
-    """The bug: app thinks it is held, hardware says it is not."""
+    """The bug: app thinks it is held, hardware — which has already shown it
+    can see this key — says it is not."""
+    assert mac_tap.release_was_missed("alt_r", held_since=0.0, now=5.0,
+                                      system="Darwin", seen_down=True,
+                                      _state=lambda _kc: False) is True
+
+
+def test_a_probe_that_never_saw_the_key_down_cannot_end_the_take():
+    """The owner's macOS 26 log: CGEventSourceKeyState answers False for a
+    Right Option that is physically held, so every take ended at the grace
+    boundary with 0.6 s of audio. A bare "up" from a probe with no history
+    is noise, not a release."""
     assert mac_tap.release_was_missed("alt_r", held_since=0.0, now=5.0,
                                       system="Darwin",
-                                      _state=lambda _kc: False) is True
+                                      _state=lambda _kc: False) is False
+
+
+def test_a_hold_watch_earns_the_right_to_end_a_take():
+    readings = iter([False, False, True, True, False])
+    watch = mac_tap.HoldWatch("alt_r", held_since=0.0, system="Darwin",
+                              _state=lambda _kc: next(readings))
+    assert watch.release_was_missed(1.0) is False   # never seen down
+    assert watch.release_was_missed(2.0) is False
+    assert watch.release_was_missed(3.0) is False   # down: now trusted
+    assert watch.seen_down is True
+    assert watch.release_was_missed(4.0) is False   # still down
+    assert watch.release_was_missed(5.0) is True    # up after down: missed
 
 
 def test_the_grace_period_protects_the_start_of_a_take():
     """Press event and hardware state are not sampled at the same instant;
     cutting a Take off at its first poll would be a worse bug."""
     assert mac_tap.release_was_missed("alt_r", held_since=0.0, now=0.1,
-                                      system="Darwin",
+                                      system="Darwin", seen_down=True,
                                       _state=lambda _kc: False) is False
 
 

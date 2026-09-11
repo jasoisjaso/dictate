@@ -119,20 +119,55 @@ def key_is_down(name: str, system: str | None = None, _state=None):
         return None
 
 
+class HoldWatch:
+    """One push-to-talk hold, checked against the hardware key state.
+
+    The probe has to EARN the right to end a Take. On macOS 26 this machine's
+    CGEventSourceKeyState answers False for a Right Option that is physically
+    held down — for the whole hold, in both the combined and HID states — so a
+    guard that trusted a bare "up" reading ended every take at the grace
+    boundary (the 0.6 s takes in the owner's log). A probe that has never once
+    seen the key DOWN during this hold has not shown it can see the key at
+    all, and its "up" is noise, not a release.
+
+    So a Take ends from here only when all three hold:
+      * the key has been "held" longer than `grace` (press event and hardware
+        are not sampled at the same instant), and
+      * the probe reported the key down at least once during THIS hold, and
+      * it now reports the key up.
+    """
+
+    def __init__(self, ptt_name: str, held_since: float, grace: float = 0.6,
+                 system: str | None = None, _state=None):
+        self.ptt_name = ptt_name
+        self.held_since = held_since
+        self.grace = grace
+        self.system = system
+        self._state = _state
+        self.seen_down = False
+
+    def release_was_missed(self, now: float) -> bool:
+        """True when the app thinks the key is held but the hardware, which
+        has proven it can see this key, says it is not."""
+        down = key_is_down(self.ptt_name, system=self.system, _state=self._state)
+        if down is True:
+            self.seen_down = True
+            return False
+        if down is None or not self.seen_down:
+            return False
+        return now - self.held_since >= self.grace
+
+
 def release_was_missed(ptt_name: str, held_since: float, now: float,
                        grace: float = 0.6, system: str | None = None,
-                       _state=None) -> bool:
-    """True when the app thinks the key is held but the hardware disagrees.
-
-    The grace period exists because the two sources are not sampled at the
-    same instant: a press event can arrive a few tens of milliseconds before
-    the hardware settles, and cutting a Take off at its very first poll would
-    be a worse bug than the one being fixed. Only a key that has been "held"
-    for longer than `grace` is allowed to be contradicted.
-    """
-    if now - held_since < grace:
-        return False
-    return key_is_down(ptt_name, system=system, _state=_state) is False
+                       _state=None, seen_down: bool = False) -> bool:
+    """One-shot form of HoldWatch.release_was_missed for a probe whose
+    history is known. `seen_down` is whether the probe has already reported
+    this key down during the hold; without it, an "up" never ends a Take."""
+    watch = HoldWatch(ptt_name, held_since, grace=grace, system=system,
+                      _state=_state)
+    watch.seen_down = seen_down
+    return watch.release_was_missed(now)
 
 
 def disable_reason(event_type) -> str | None:

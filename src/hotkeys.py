@@ -248,12 +248,16 @@ class HotkeyController:
             from . import mac_tap
         except ImportError:
             import mac_tap
+        # One watch per hold: it remembers whether the hardware probe has ever
+        # seen this key DOWN, and only then may an "up" reading end the Take.
+        # On a machine where the probe cannot see the key at all (macOS 26,
+        # Right Option) it stays silent and the event stream alone decides.
+        watch = mac_tap.HoldWatch(self.names["ptt"], self._ptt_since)
         while not stop.wait(self.STUCK_POLL_SECONDS):
             if not self._ptt_down:
                 return
             try:
-                missed = mac_tap.release_was_missed(
-                    self.names["ptt"], self._ptt_since, time.monotonic())
+                missed = watch.release_was_missed(time.monotonic())
             except Exception:
                 log.debug("stuck-key poll failed", exc_info=True)
                 return
