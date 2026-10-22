@@ -174,6 +174,34 @@ class WaveformOverlay(QWidget):
             import mac_window
         mac_window.pin_overlay(self)
 
+    def _show_without_stealing_focus(self):
+        """show() + raise_(), then give focus back to the app the user is in.
+
+        On macOS, Qt's show() of this window activates Dictate even as an
+        accessory app with WA_ShowWithoutActivating set, and every keystroke
+        Injection posts afterwards lands in Dictate's own focus-less window
+        instead of the user's app. Measured on macOS 26 (tests/probe scripts);
+        re-activating the previous app is the only thing that fixed it.
+        """
+        if not self._needs_pinning:
+            self.show()
+            self.raise_()
+            return
+        try:
+            from . import mac_window
+        except ImportError:
+            import mac_window
+        prev = mac_window.frontmost_app()
+        self.show()
+        self.raise_()
+        if prev is not None:
+            # Qt activates Dictate a beat AFTER show() returns, so a
+            # synchronous hand-back is undone by it. Give focus back once the
+            # event loop has processed the show, and once more shortly after
+            # in case the activation lands late.
+            for delay in (0, 80):
+                QTimer.singleShot(delay, lambda p=prev: mac_window.give_focus_back(p))
+
     # ── public API ──────────────────────────────────────────────────────
 
     def set_level_source(self, fn):
@@ -199,8 +227,7 @@ class WaveformOverlay(QWidget):
             self._opacity = 0.0
         self._apply_size()
         self._place()
-        self.show()
-        self.raise_()
+        self._show_without_stealing_focus()
         if not self._timer.isActive():
             self._timer.start(TICK_MS)
 
@@ -222,8 +249,7 @@ class WaveformOverlay(QWidget):
             self._opacity = 0.0
         self._apply_size()
         self._place()
-        self.show()
-        self.raise_()
+        self._show_without_stealing_focus()
         self._timer.start(TICK_MS)
 
     def show_processing(self):

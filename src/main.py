@@ -64,6 +64,21 @@ def main():
         cfg["whisper"]["compute_type"] = "int8"
     first_run = not os.path.exists(paths.config_path())
 
+    # Menu-bar-only, applied from source so a dev run behaves exactly like the
+    # bundle later (the bundle's LSUIElement says the same thing). Must be
+    # BEFORE QApplication: switching an already-created NSApp to accessory
+    # makes macOS activate Dictate, so the frontmost app becomes Dictate's
+    # own invisible window and every typed keystroke lands there instead of
+    # in the app the user is dictating into. Created first, NSApp starts as
+    # an accessory and the user's app keeps focus.
+    from . import mac_shell
+    mac_shell.apply_menu_bar_only()
+    # Qt's cocoa plugin "transforms" a process that is not an LSUIElement
+    # bundle back into a Regular foreground app while creating QApplication,
+    # which undoes the line above and activates Dictate on its first window.
+    # This is Qt's documented opt-out; it must be set before QApplication.
+    os.environ.setdefault("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", "1")
+
     from PySide6.QtCore import QLockFile
     from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
@@ -83,13 +98,6 @@ def main():
     if not QSystemTrayIcon.isSystemTrayAvailable():
         log.error("no system tray available")
         sys.exit(1)
-
-    # Menu-bar-only, applied from source so a dev run behaves exactly like the
-    # bundle later (the bundle's LSUIElement says the same thing). Must be
-    # after QApplication — NSApp is the object Qt creates — and before the
-    # tray shows, so no Dock icon ever appears, even briefly.
-    from . import mac_shell
-    mac_shell.apply_menu_bar_only()
 
     # Before any hotkey listener starts: macOS switches an event tap off on a
     # slow callback or heavy input, and pynput never turns it back on, so a

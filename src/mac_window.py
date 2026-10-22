@@ -101,6 +101,63 @@ def float_over_everything(nsw, system: str | None = None) -> bool:
     return True
 
 
+def frontmost_app(system: str | None = None):
+    """The NSRunningApplication that has focus right now, or None.
+
+    Taken BEFORE the overlay is shown, so it can be given focus back after.
+    """
+    if not wants_floating_overlay(system):
+        return None
+    try:
+        import AppKit
+
+        return AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+    except Exception:
+        log.debug("could not read the frontmost app", exc_info=True)
+        return None
+
+
+def give_focus_back(prev, system: str | None = None, _is_active=None,
+                    _own_pid=None) -> bool:
+    """Re-activate the app the user was in, if showing the overlay stole it.
+
+    Measured on macOS 26: even as an accessory app, with WA_ShowWithoutActivating
+    set and QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM on, Qt's show() of
+    the overlay makes Dictate the active application and the frontmost app
+    reads as None. Every keystroke Injection posts then goes to Dictate's own
+    focus-less window, so the words are transcribed and never typed anywhere
+    — with no error, because the events were delivered. The only thing that
+    put text into Terminal again was activating the previous app afterwards.
+
+    True when the previous app was asked to come back. False when there is
+    nothing to do (not macOS, nothing recorded, Dictate is not active, or the
+    previous app is Dictate itself) or AppKit refused. Never raises.
+    """
+    if not wants_floating_overlay(system) or prev is None:
+        return False
+    try:
+        import os
+
+        import AppKit
+
+        active = (_is_active or (lambda: bool(AppKit.NSApp.isActive())))()
+        if prev.processIdentifier() == (_own_pid or os.getpid()):
+            return False
+        # Re-activate even when Dictate does not (yet) read as active: Qt
+        # activates the app a beat AFTER show() returns, so a synchronous
+        # isActive() check right after show() answers False and the theft
+        # happens anyway. Activating an app that already has focus is a no-op.
+        ok = bool(prev.activateWithOptions_(
+            AppKit.NSApplicationActivateIgnoringOtherApps))
+        log.info("overlay shown (Dictate active=%s) — focus handed to %s (%s)",
+                 active, prev.bundleIdentifier(), "ok" if ok else "refused")
+        return ok
+    except Exception:
+        log.warning("could not give focus back to the previous app — typed "
+                    "text may not reach it", exc_info=True)
+        return False
+
+
 def pin_overlay(widget, system: str | None = None, _objc_object=None) -> bool:
     """Resolve a widget's NSWindow and pin it. The overlay's only entry point.
 

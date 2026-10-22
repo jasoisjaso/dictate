@@ -48,16 +48,21 @@ def wants_menu_bar_only(system: str | None = None) -> bool:
     return (system or platform.system()) == MACOS
 
 
-def _set_activation_policy(policy: int) -> bool:
+def _shared_app():
+    """The one NSApplication. sharedApplication() creates it if Qt has not
+    yet, and Qt adopts an existing one — so this works before or after
+    QApplication. NSApp alone is None before either exists."""
     import AppKit
 
-    return bool(AppKit.NSApp.setActivationPolicy_(policy))
+    return AppKit.NSApplication.sharedApplication()
+
+
+def _set_activation_policy(policy: int) -> bool:
+    return bool(_shared_app().setActivationPolicy_(policy))
 
 
 def _get_activation_policy() -> int:
-    import AppKit
-
-    return int(AppKit.NSApp.activationPolicy())
+    return int(_shared_app().activationPolicy())
 
 
 def apply_menu_bar_only(system: str | None = None, _set_policy=None,
