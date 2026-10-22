@@ -133,11 +133,80 @@ def apply_platform_defaults(base: dict, system: str | None = None) -> dict:
     return out
 
 
+# Keys an Apple laptop's built-in keyboard does not have. F13-F20 exist only on
+# Apple's full-size/extended keyboards; the rest are PC-only. A Windows setup
+# carried over to a MacBook (settings.toml was copied, or the key was picked on
+# a PC) leaves push-to-talk bound to one of these, and the hotkey is then
+# simply unreachable — the app looks dead with no error anywhere.
+_NOT_ON_BUILT_IN_MAC_KEYBOARD = frozenset(
+    [f"f{i}" for i in range(13, 21)]
+    + ["pause", "insert", "scroll_lock", "menu", "ctrl_r", "rctrl"]
+)
+
+
+def _external_keyboard_present() -> bool | None:
+    """True if any non-built-in keyboard is attached, False if only the built-in
+    one is, None when we cannot tell (non-mac, ioreg missing or unparseable).
+
+    None must never trigger the fallback: overriding a binding on a guess would
+    break a user whose extended keyboard we simply failed to see.
+    """
+    try:
+        import plistlib
+        import subprocess
+
+        raw = subprocess.run(
+            ["ioreg", "-r", "-c", "IOHIDDevice", "-d", "1", "-a"],
+            capture_output=True, timeout=3, check=True,
+        ).stdout
+        devices = plistlib.loads(raw) if raw else []
+    except Exception:
+        return None
+    keyboards = [d for d in devices if isinstance(d, dict)
+                 and d.get("PrimaryUsagePage") == 1 and d.get("PrimaryUsage") == 6]
+    if not keyboards:
+        return None
+    return any(not d.get("Built-In", False) for d in keyboards)
+
+
+def fix_unreachable_ptt_key(cfg: dict, system: str | None = None,
+                            _external=None) -> dict:
+    """On a Mac with only the built-in keyboard, a push-to-talk key that keyboard
+    does not have (F13, Pause, Right Ctrl...) falls back to the Mac default.
+
+    The user's binding still wins whenever it could physically be pressed: an
+    external keyboard is attached, or we cannot tell. Returns a new dict;
+    never mutates the caller's.
+    """
+    if system is None:
+        system = platform.system()
+    if str(system).strip().lower() != "darwin":
+        return cfg
+    hk = cfg.get("hotkeys") or {}
+    key = str(hk.get("push_to_talk_key", "")).strip().lower().strip("<>")
+    if key not in _NOT_ON_BUILT_IN_MAC_KEYBOARD:
+        return cfg
+    external = (_external or _external_keyboard_present)()
+    if external is not False:
+        return cfg
+    try:
+        from . import hotkeys as _hotkeys
+    except ImportError:
+        import hotkeys as _hotkeys
+    fallback = _hotkeys.defaults_for("Darwin")["push_to_talk_key"]
+    logging.getLogger("dictate.config").warning(
+        "push-to-talk key %r is not on this Mac's keyboard and no external "
+        "keyboard is attached; using %r instead", key, fallback)
+    out = _deep_merge(cfg, {})
+    out["hotkeys"] = dict(hk, push_to_talk_key=fallback)
+    return out
+
+
 def load(defaults: dict | None = None) -> dict:
     base = defaults if defaults is not None else _read(_default_toml_path())
     base = apply_platform_defaults(base)
     user = _read(paths.config_path())
-    return _deep_merge(base, user)
+    return fix_unreachable_ptt_key(_deep_merge(base, user))
 
 
 def save(user_cfg: dict, *, merge: bool = True) -> None:
