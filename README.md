@@ -309,6 +309,8 @@ ISCC packaging\installer.iss   # build the per-user installer (Inno Setup 6)
 
 Pure-logic tests run anywhere: `python -m pytest tests -q --ignore=tests/smoke_win.py`. CI runs the suite on Ubuntu and Windows for every push; tagged releases are compiled and published automatically by GitHub Actions.
 
+**macOS (Apple Silicon):** see [docs/mac.md](docs/mac.md) — running from source, building `Dictate.app`, permissions, the Right Option hotkey, and the Mac fixes log.
+
 ## Bonus: Web Transcriber (WSL/Linux)
 
 `run.sh` starts a drag-and-drop file transcriber at `http://localhost:8737`. Drop any audio/video file, get TXT/SRT/VTT/JSON out. Same engine, GPU accelerated, handles long recordings.
