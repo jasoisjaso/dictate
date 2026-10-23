@@ -81,6 +81,7 @@ class ChunkedTake:
         self.sr = samplerate
         self._texts: list[str] = []
         self._committed = 0             # samples committed so far
+        self.chunk_log: list[tuple[float, float, str]] = []  # (start_s, end_s, text)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -114,7 +115,14 @@ class ChunkedTake:
                                                            prev_text=prev)
                 # commit the position even if the text came back empty —
                 # re-transcribing the same silent audio forever helps no one
+                start_s = self._committed / self.sr
                 self._committed += cut
+                self.chunk_log.append((start_s, self._committed / self.sr, text))
+                if not text:
+                    # Was silent: speech decoded to nothing is lost text, so
+                    # it must be visible in the log (2026-10-23 field report).
+                    log.info("chunk %.1f-%.1fs decoded EMPTY", start_s,
+                             self._committed / self.sr)
                 if text:
                     self._texts.append(text)
                     log.info("committed chunk #%d (%.1fs, %d chars)",

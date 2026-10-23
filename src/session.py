@@ -266,6 +266,7 @@ class SessionMixin:
             log.info("transcribed %.1fs audio in %.1fs (%d chars)",
                      len(audio) / 16000, time.time() - t0, len(text))
             log.debug("result text: %r", text)
+            self._dump_take(audio, raw, text, chunked)
             # Stash the raw transcript so "redo verbatim" can re-inject it
             # without cleanup/casing applied.
             self.last_raw_text = raw.strip()
@@ -273,6 +274,39 @@ class SessionMixin:
         except Exception as ex:
             log.exception("transcription failed")
             self._sig_error.emit(f"Transcription failed: {ex}")
+
+    def _dump_take(self, audio, raw, text, chunked):
+        """Opt-in diagnostic: with DICTATE_DUMP_TAKES=<dir> set, save each
+        take's audio (16 kHz WAV) plus raw/final text and the per-chunk
+        streaming log, so a dropped sentence can be replayed offline.
+
+        Off unless the env var is set — it writes what you said to disk, which
+        the default build never does (see Privacy in the README)."""
+        import os
+        d = os.environ.get("DICTATE_DUMP_TAKES")
+        if not d:
+            return
+        try:
+            import json
+            import wave
+
+            import numpy as np
+            os.makedirs(d, exist_ok=True)
+            stem = os.path.join(d, time.strftime("take-%H%M%S"))
+            pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
+            with wave.open(stem + ".wav", "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+                w.writeframes(pcm.tobytes())
+            with open(stem + ".json", "w") as f:
+                json.dump({"raw": raw, "final": text,
+                           "chunks": getattr(chunked, "chunk_log", None),
+                           "committed_s": (chunked._committed / 16000
+                                           if chunked else None),
+                           "peak": float(np.abs(audio).max()) if audio.size else 0,
+                           "rms": float(np.sqrt(np.mean(audio ** 2))) if audio.size else 0},
+                          f, indent=1)
+        except Exception:
+            log.warning("take dump failed", exc_info=True)
 
     def _preview_worker(self):
         """Live transcript while recording (GPU only): re-transcribe only the

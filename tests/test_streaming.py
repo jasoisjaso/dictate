@@ -116,6 +116,45 @@ def test_empty_chunk_text_still_advances_committed():
     take.cancel()
 
 
+def test_empty_chunk_is_logged_and_recorded(caplog):
+    """2026-10-23: speech that decoded to nothing vanished without a trace.
+    An empty commit must now show up in the log and in chunk_log."""
+    import logging
+
+    class SilentEngine(FakeEngine):
+        def transcribe_audio_buffer(self, audio, prev_text=None):
+            self.calls.append((audio.size, prev_text))
+            return ""
+    caplog.set_level(logging.INFO, logger="dictate.streaming")
+    take = ChunkedTake(SilentEngine(), FakeRecorder(np.zeros(30 * SR, np.float32)))
+    take.start()
+    deadline = time.time() + 5
+    while not take.chunk_log and time.time() < deadline:
+        time.sleep(0.1)
+    take.cancel()
+    assert take.chunk_log, "empty chunk was not recorded"
+    start, end, text = take.chunk_log[0]
+    assert start == 0.0 and end > 0 and text == ""
+    assert any("decoded EMPTY" in r.getMessage() for r in caplog.records)
+
+
+def test_chunk_log_spans_are_contiguous():
+    eng = FakeEngine()
+    audio = (np.random.default_rng(3).standard_normal(30 * SR) * 0.3
+             ).astype(np.float32)
+    take = ChunkedTake(eng, FakeRecorder(audio))
+    take.start()
+    deadline = time.time() + 5
+    while len(take.chunk_log) < 1 and time.time() < deadline:
+        time.sleep(0.1)
+    take.finalize(audio)
+    log_ = take.chunk_log
+    assert log_ and log_[0][0] == 0.0
+    for (a0, a1, _), (b0, _b1, _t) in zip(log_, log_[1:]):
+        assert a1 == b0             # no audio skipped between chunks
+    assert log_[-1][1] == take._committed / SR
+
+
 # ---- hardware gating --------------------------------------------------------
 
 def test_streaming_ok_gpu_always():
